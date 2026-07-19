@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+results/
+logs/
+figures/*.png
+figures/*.pdf
+wandb/
+hf_cache/
+*.pkl
+*.pt
+*.npy
+.env
