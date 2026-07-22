@@ -1,13 +1,44 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+
+# Jupyter
 .ipynb_checkpoints/
+
+# Regeneratable outputs
 results/
-logs/
-figures/*.png
-figures/*.pdf
+figures/
+logs/*.log
+
+# Data (regeneratable via download)
+data/
+mnist/
+
+# JAX cache
+hyperscaleescomp/
+
+# W&B local runs (already synced to cloud)
 wandb/
-hf_cache/
-*.pkl
-*.pt
-*.npy
+
+# Environment secrets
 .env
+
+# Pickled objects
+*.pkl
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# But keep directory structure via .gitkeep
+!results/.gitkeep
+!figures/.gitkeep
+!logs/.gitkeep
+!logs/findings.md
