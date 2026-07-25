@@ -476,17 +476,349 @@ def train_openai_es(seed: int, X_train, y_train, X_test, y_test) -> dict:
     }
     return result
 # ============================================================
-# Sanity: run backprop on seed 0 as a full check
+# Method 3: Sep-CMA-ES (evosax 0.2.0)
+# ============================================================
+from evosax.algorithms import Sep_CMA_ES
+
+def train_sep_cma_es(seed: int, X_train, y_train, X_test, y_test) -> dict:
+    """Sep-CMA-ES on the MNIST MLP.
+
+    Sep-CMA-ES uses a diagonal covariance matrix (as opposed to full CMA-ES,
+    which stores an O(d²) covariance and is infeasible at d=335k). It adapts
+    both σ and the diagonal covariance internally via evolution paths —
+    no external optimiser or std schedule to configure.
+    """
+    print(f"\n[sep_cma_es seed={seed}] initialising...")
+
+    model, params_template = init_params(seed=seed)
+
+    strategy = Sep_CMA_ES(
+        population_size=CFG.sepcma_pop,
+        solution=params_template,
+    )
+
+    key = random.PRNGKey(seed)
+    key, subkey = random.split(key)
+    default_params = strategy.default_params
+    state = strategy.init(subkey, params_template, default_params)
+    fitness_fn = _make_fitness_fn(model, X_train, y_train)
+
+    tracker = ConvergenceTracker(
+        patience=CFG.patience,
+        tol=CFG.tol,
+        max_wall_seconds=CFG.max_wall_seconds,
+    )
+    tracker.start()
+
+    n_train = X_train.shape[0]
+    gen = 0
+
+    while True:
+        key, batch_key, ask_key, tell_key = random.split(key, 4)
+        idx = random.randint(batch_key, (CFG.batch_size,), 0, n_train)
+        X_batch = X_train[idx]
+        y_batch = y_train[idx]
+
+        population, state = strategy.ask(ask_key, state, default_params)
+        fitness = fitness_fn(population, X_batch, y_batch)
+        state, metrics = strategy.tell(tell_key, population, fitness, state, default_params)
+
+        gen += 1
+
+        if gen % CFG.eval_every_gens == 0:
+            mean_params = strategy.get_mean(state)
+            test_acc = evaluate_test_acc(model, mean_params, X_test, y_test)
+            stop = tracker.update(gen, test_acc)
+            print(f"[sep_cma_es seed={seed}] gen={gen:5d}  "
+                  f"fit_min={float(fitness.min()):.4f}  "
+                  f"fit_mean={float(fitness.mean()):.4f}  "
+                  f"test_acc={test_acc:.4f}  "
+                  f"wall_s={tracker.history[-1][0]:.1f}")
+            if stop:
+                print(f"[sep_cma_es seed={seed}] STOPPED at gen={gen} "
+                      f"(reason={tracker.stop_reason})")
+                break
+
+    result = tracker.finalise()
+    result["method"] = "sep_cma_es"
+    result["seed"] = seed
+    result["n_params"] = count_params(params_template)
+    result["hp"] = {
+        "population_size": CFG.sepcma_pop,
+        "batch_size": CFG.batch_size,
+        "note": "Sep-CMA-ES adapts σ and diagonal covariance internally; no external optimiser or σ schedule.",
+    }
+    return result
+
+# ============================================================
+# Method 4: EGGROLL (HyperscaleES, rank=1)
+# ============================================================
+import hyperscalees as hs
+
+def train_eggroll(seed: int, X_train, y_train, X_test, y_test, rank:int=None) -> dict:
+    """EGGROLL on a 3L-256D ReLU MLP built via HyperscaleES's own MLP class.
+
+    Different API from evosax: population is expressed by vmap'ing over
+    thread_ids, and low-rank noise is deterministically reconstructed from
+    the key + epoch + thread_id rather than stored. Antithetic sampling is
+    built into the noiser (pop_size effective = num_envs, with num_envs/2
+    unique noise directions, mirrored).
+
+    Note: HyperscaleES maximises fitness (unlike evosax 0.2.0 which
+    minimises). Fitness returned as -CE.
+    """
+    if rank is None:
+        rank = CFG.eggroll_rank
+    print(f"\n[eggroll rank={rank} seed={seed}] initialising...")
+
+    NOISER = hs.noiser.eggroll.EggRoll
+    MODEL = hs.models.common.MLP
+
+    key = jax.random.key(seed)
+    model_key = random.fold_in(key, 0)
+    es_key = random.fold_in(key, 1)
+    data_key = random.fold_in(key, 2)
+
+    # Build the same 3L-256D architecture, but via HyperscaleES's MLP class.
+    # in_dim=784 (flattened MNIST), out_dim=10 (classes), hidden=[256, 256, 256].
+    # Uses ReLU to match Flax MLP used for backprop / OpenAI-ES / Sep-CMA-ES.
+    frozen_params, params, scan_map, es_map = MODEL.rand_init(
+        model_key,
+        in_dim=CFG.input_dim,
+        out_dim=CFG.n_classes,
+        hidden_dims=[256, 256, 256],
+        use_bias=True,
+        activation="relu",
+        dtype="float32",
+    )
+    es_tree_key = hs.models.common.simple_es_tree_key(params, es_key, scan_map)
+
+    # Report parameter count for sanity
+    n_params = sum(x.size for x in jax.tree_util.tree_leaves(params))
+    print(f"[eggroll rank={rank} seed={seed}] param count: {n_params:,}")
+
+    # Initialise EggRoll: paper's Brax/IDP config
+    # rank=1 (paper's headline claim), sigma=0.05, lr=0.01, Adam
+    frozen_noiser_params, noiser_params = NOISER.init_noiser(
+        params,
+        sigma=CFG.eggroll_sigma_init,
+        lr=CFG.eggroll_lr_init,
+        solver=optax.adamw,
+        solver_kwargs={"b1": 0.9, "b2": 0.999},
+        rank=rank,
+    )
+
+    # ------------------------------------------------------------
+    # Forward passes: training (with noise) and evaluation (mean params only)
+    # ------------------------------------------------------------
+    # Training: vmap over population (thread_ids). For fair comparison with
+    # OpenAI-ES/Sep-CMA-ES, ALL members see the SAME mini-batch — so we
+    # vmap over threads but keep the batch fixed. Then for each member,
+    # we further vmap the model over the batch dimension.
+    #
+    # Model forward signature: (noiser, frozen_np, np, frozen_p, p, es_tree_key, iterinfo, x)
+    # Batch fitness: mean cross-entropy across the mini-batch.
+
+    # noiser_params and params are ARGUMENTS, not closure vars, so JIT traces them fresh each time.
+    def per_member_batch_ce(np_current, p_current, iterinfo_i, X_batch, y_batch):
+        def forward_one(x):
+            return MODEL.forward(
+                NOISER, frozen_noiser_params, np_current,
+                frozen_params, p_current, es_tree_key, iterinfo_i, x
+            )
+        logits_batch = jax.vmap(forward_one)(X_batch)
+        one_hot = jax.nn.one_hot(y_batch, CFG.n_classes)
+        log_probs = jax.nn.log_softmax(logits_batch)
+        ce = -jnp.mean(jnp.sum(one_hot * log_probs, axis=-1))
+        return -ce
+
+    # vmap only over iterinfo_i (population axis). np_current, p_current,
+    # X_batch, y_batch are shared across the population.
+    jit_pop_fitness = jax.jit(jax.vmap(
+        per_member_batch_ce, in_axes=(None, None, 0, None, None)
+    ))
+
+    # Evaluation: no noiser perturbation, just the mean params on the full test set.
+    def eval_one(x):
+        return MODEL.forward(
+            NOISER, frozen_noiser_params, noiser_params,
+            frozen_params, params, es_tree_key, None, x
+        )
+    jit_eval_batch = jax.jit(jax.vmap(eval_one))
+
+    def eval_batch(np_current, p_current, X):
+        def eval_one(x):
+            return MODEL.forward(
+                NOISER, frozen_noiser_params, np_current,
+                frozen_params, p_current, es_tree_key, None, x
+            )
+        return jax.vmap(eval_one)(X)
+    jit_eval_batch = jax.jit(eval_batch)
+
+    def evaluate_mean_test_acc(np_current, p_current):
+        logits = jit_eval_batch(np_current, p_current, X_test)
+        return float(jnp.mean(jnp.argmax(logits, axis=-1) == y_test))
+
+    # Update step (matches end-to-end test)
+    jit_update = jax.jit(lambda n, p, f, i: NOISER.do_updates(
+        frozen_noiser_params, n, p, es_tree_key, f, i, es_map
+    ))
+
+    # ------------------------------------------------------------
+    # Training loop
+    # ------------------------------------------------------------
+    tracker = ConvergenceTracker(
+        patience=CFG.patience,
+        tol=CFG.tol,
+        max_wall_seconds=CFG.max_wall_seconds,
+    )
+    tracker.start()
+
+    n_train = X_train.shape[0]
+    num_envs = CFG.eggroll_pop
+    gen = 0
+
+    while True:
+        data_key, batch_key = random.split(data_key)
+        idx = random.randint(batch_key, (CFG.batch_size,), 0, n_train)
+        X_batch = X_train[idx]
+        y_batch = y_train[idx]
+
+        # iterinfo = (epoch broadcasted to pop, arange for thread_ids)
+        iterinfo = (
+            jnp.full(num_envs, gen, dtype=jnp.int32),
+            jnp.arange(num_envs, dtype=jnp.int32),
+        )
+
+        # Per-member fitness (population size = num_envs)
+        raw_fitness = jit_pop_fitness(noiser_params, params, iterinfo, X_batch, y_batch)
+        # EGGROLL's own fitness shaping (rank-based, similar to OpenAI-ES centred ranks)
+        fitness = NOISER.convert_fitnesses(frozen_noiser_params, noiser_params, raw_fitness)
+
+        # Update params
+        noiser_params, params = jit_update(noiser_params, params, fitness, iterinfo)
+
+        gen += 1
+
+        if gen % CFG.eval_every_gens == 0:
+            test_acc = evaluate_mean_test_acc(noiser_params, params)
+            stop = tracker.update(gen, test_acc)
+            print(f"[eggroll rank={rank} seed={seed}] gen={gen:5d}  "
+                  f"raw_fit_max={float(raw_fitness.max()):.4f}  "
+                  f"raw_fit_mean={float(raw_fitness.mean()):.4f}  "
+                  f"test_acc={test_acc:.4f}  "
+                  f"wall_s={tracker.history[-1][0]:.1f}")
+            if stop:
+                print(f"[eggroll rank={rank}seed={seed}] STOPPED at gen={gen} "
+                      f"(reason={tracker.stop_reason})")
+                break
+
+    result = tracker.finalise()
+    result["method"] = f"eggroll_r{rank}"
+    result["seed"] = seed
+    result["n_params"] = n_params
+    result["hp"] = {
+        "rank": rank,
+        "population_size": CFG.eggroll_pop,
+        "sigma_init": CFG.eggroll_sigma_init,
+        "sigma_decay": CFG.eggroll_sigma_decay,
+        "lr_init": CFG.eggroll_lr_init,
+        "lr_decay": CFG.eggroll_lr_decay,
+        "optimizer": "adamw",
+        "batch_size": CFG.batch_size,
+        "note": "Uses HyperscaleES's own MLP (ReLU, 3L-256D). Matches Flax architecture. Antithetic sampling built into noiser.",
+    }
+    return result
+# ============================================================
+# All 4 methods × 3 seeds, plus EGGROLL rank sweep × 3 seeds
 # ============================================================
 if __name__ == "__main__":
+    import time as _time
+    sweep_start = _time.perf_counter()
+    
+    print("\n" + "="*70)
+    print("MULTI-SEED SWEEP: 4 methods + EGGROLL rank sweep, 3 seeds each")
+    print("="*70)
+    
     print("\n[main] Loading MNIST...")
     X_train, y_train, X_test, y_test = load_mnist()
-
-    print("\n[main] Running OpenAI-ES, seed=0...")
-    result = train_openai_es(0, X_train, y_train, X_test, y_test)
-    save_result(result)
-
-    print(f"\n[main] Final: best_test_acc={result['best_test_acc']:.4f}  "
-          f"wall_s={result['converged_at_wall_s']:.1f}  "
-          f"gen={result['converged_at_step']}  "
-          f"reason={result['stop_reason']}")
+    
+    seeds = CFG.seeds   # (0, 1, 2)
+    all_results = []
+    
+    # -------- Backprop --------
+    print("\n" + "="*70)
+    print("METHOD: Backprop + Adam")
+    print("="*70)
+    for seed in seeds:
+        print(f"\n>>> Backprop seed={seed}")
+        result = train_backprop(seed, X_train, y_train, X_test, y_test)
+        save_result(result)
+        all_results.append(result)
+    
+    # -------- OpenAI-ES --------
+    print("\n" + "="*70)
+    print("METHOD: OpenAI-ES")
+    print("="*70)
+    for seed in seeds:
+        print(f"\n>>> OpenAI-ES seed={seed}")
+        result = train_openai_es(seed, X_train, y_train, X_test, y_test)
+        save_result(result)
+        all_results.append(result)
+    
+    # -------- Sep-CMA-ES --------
+    print("\n" + "="*70)
+    print("METHOD: Sep-CMA-ES")
+    print("="*70)
+    for seed in seeds:
+        print(f"\n>>> Sep-CMA-ES seed={seed}")
+        result = train_sep_cma_es(seed, X_train, y_train, X_test, y_test)
+        save_result(result)
+        all_results.append(result)
+    
+    # -------- EGGROLL rank sweep --------
+    print("\n" + "="*70)
+    print("METHOD: EGGROLL (ranks 1, 4, 16)")
+    print("="*70)
+    for rank in [1, 4, 16]:
+        for seed in seeds:
+            print(f"\n>>> EGGROLL rank={rank} seed={seed}")
+            result = train_eggroll(seed, X_train, y_train, X_test, y_test, rank=rank)
+            save_result(result)
+            all_results.append(result)
+    
+    # -------- Summary --------
+    total_wall = _time.perf_counter() - sweep_start
+    print("\n" + "="*70)
+    print(f"SWEEP COMPLETE — total wall-clock: {total_wall/60:.1f} minutes")
+    print("="*70)
+    print(f"\n{'method':<20} {'seed':<6} {'best_acc':<10} {'wall_s':<10} {'stop':<10}")
+    print("-" * 70)
+    for r in all_results:
+        method = r['method']
+        seed = r['seed']
+        acc = r['best_test_acc']
+        wall = r.get('converged_at_wall_s') or r.get('total_wall_s') or 0
+        stop = r['stop_reason']
+        print(f"{method:<20} {seed:<6} {acc:<10.4f} {wall:<10.1f} {stop:<10}")
+    
+    # Aggregate stats per method (mean ± std across seeds)
+    print("\n" + "="*70)
+    print("AGGREGATED (mean ± std across seeds)")
+    print("="*70)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in all_results:
+        grouped[r['method']].append(r)
+    
+    print(f"{'method':<20} {'best_acc (mean±std)':<25} {'wall_s (mean±std)':<25}")
+    print("-" * 70)
+    for method, runs in grouped.items():
+        accs = [r['best_test_acc'] for r in runs]
+        walls = [r.get('converged_at_wall_s') or r.get('total_wall_s') or 0 for r in runs]
+        acc_str = f"{np.mean(accs):.4f} ± {np.std(accs):.4f}"
+        wall_str = f"{np.mean(walls):.1f} ± {np.std(walls):.1f}"
+        print(f"{method:<20} {acc_str:<25} {wall_str:<25}")
+    
+    print(f"\nResults saved to: {RESULTS_DIR}")
+    print("Next: run scripts/plot_comparison.py (to be written next)")
