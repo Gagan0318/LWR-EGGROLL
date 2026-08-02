@@ -1,8 +1,5 @@
 # Findings Log — EGGROLL & LWR-EGGROLL Dissertation
 
-> **Total programme:** ~800+ runs across 4 datasets, 3 architectures, 20 experiment types.
-> All experiments complete. Write-up phase active.
-
 ---
 
 ## Hyperparameter Transfer Failure: RL-Tuned ES Settings Diverge on Supervised Classification
