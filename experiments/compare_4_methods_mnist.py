@@ -447,7 +447,7 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
         model_key,
         in_dim=CFG.input_dim,
         out_dim=CFG.n_classes,
-        hidden_dims=[256, 256, 256],
+        hidden_dims=list(CFG.hidden_dims),
         use_bias=True,
         activation="relu",
         dtype="float32",
@@ -508,6 +508,11 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
     num_envs = CFG.eggroll_pop
     gen = 0
 
+    fitness_variance_history = []
+    n_train = X_train.shape[0]
+    num_envs = CFG.eggroll_pop
+    gen = 0
+
     while True:
         data_key, batch_key = random.split(data_key)
         idx = random.randint(batch_key, (CFG.batch_size,), 0, n_train)
@@ -520,6 +525,7 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
         )
 
         raw_fitness = jit_pop_fitness(noiser_params, params, iterinfo, X_batch, y_batch)
+        fitness_variance_history.append((gen, float(jnp.var(raw_fitness))))
         fitness = NOISER.convert_fitnesses(frozen_noiser_params, noiser_params, raw_fitness)
 
         noiser_params, params = jit_update(noiser_params, params, fitness, iterinfo)
@@ -543,6 +549,7 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
     result["method"] = label
     result["seed"] = seed
     result["n_params"] = n_params
+    result["fitness_variance_history"] = fitness_variance_history
 
     if isinstance(rank_spec, dict):
         rank_hp = {str(k): v for k, v in rank_spec.items()}
