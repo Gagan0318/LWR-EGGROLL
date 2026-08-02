@@ -35,3 +35,70 @@ throughput claim.
 
 **Next:** repeat with a lower sigma (0.01) to confirm the trend; run four-way
 method comparison at rank 1 (paper default) on MNIST before moving to RL.
+
+### 27 Jul 2026 — σ×rank sweep, mechanism validation
+
+Full 2D reproduction of the July 22 σ×rank finding, at n=5 seeds with
+paired variance measurement.
+
+**Setup**
+- σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3}
+- rank ∈ {1, 2, 4, 8, 16}
+- Seeds ∈ {0, 1, 2, 3, 4}  → 125 runs, all converged (0 wall-cap)
+- Method: LWREggRoll with scalar rank (equivalent to vanilla EGGROLL)
+- Architecture: [256, 256, 256] MLP, pop=2048
+
+**Results**
+
+Best-rank per σ (mean over 5 seeds):
+
+| σ    | Best rank | Peak acc |
+|------|-----------|----------|
+| 0.01 | 16        | 0.9027   |
+| 0.03 | 16        | 0.8349   |
+| 0.05 | 4         | 0.8253   |
+| 0.1  | 2 (≈8)    | 0.8231   |
+| 0.3  | 4         | 0.8289   |
+
+Two findings:
+
+1. **Variance scales inversely with rank at every σ.** Population fitness
+   variance drops monotonically as rank increases, across the full σ
+   range. This directly supports the variance mechanism used in the LWR
+   motivation.
+2. **σ=0.01 is a qualitatively different accuracy regime; σ ≥ 0.03 are
+   similar.** At σ=0.01, higher rank monotonically improves accuracy
+   (0.888 at r=1 → 0.903 at r=16, a 1.5pp gain). At σ ≥ 0.03, all
+   rank-accuracy differences are within ~2× the per-seed std — an
+   interior optimum around r=4 is visible at σ=0.05 and σ=0.3 but is
+   modest (r=4 vs r=16 gap of 0.012 at σ=0.05, vs σ=0.05-r=16 std of
+   0.007). The July "flip" from the July 22 sweep is only weakly
+   present in accuracy at n=5. The strong empirical signal is the
+   variance interaction, not the accuracy one.
+
+**Interpretation**
+Phase 1 of the sensitivity pilot did not detect the variance-rank
+relation, but Phase 1 measured a different quantity: early-training
+variance (gens 1–50) in the isolated-perturbation setup. This sweep
+measures late-training variance in the full-network setting, which is
+the correct condition. Both are consistent — the variance-rank effect
+is a full-network, at-convergence phenomenon.
+
+**Discrepancy note**
+This sweep uses the LWR code path with scalar rank. The interaction
+reproduces at 10⁻¹ scale in variance and ~10⁻² scale in accuracy —
+one to three orders of magnitude above the 0.0006 (10⁻⁴) numerical
+discrepancy between `eggroll_r4` and `lwr_uniform_r4`. Discrepancy
+is confirmed as sub-signal noise, not a threat to any claim. Root
+cause (JAX kernel scheduling vs subtle code-path divergence) deferred
+to Brax porting.
+
+### 28 Jul 2026 — extended rank + wall-clock budget sweeps launched
+- wall_budget_sweep: 6 vanilla ranks + 3 LWR allocs × 3 seeds at 300s budget, 27 runs
+- extended_rank_sweep: r ∈ {12, 24, 32} × σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × 5 seeds, 75 runs
+Analysis + plots morning of 29 Jul.
+
+### 28 Jul 2026 — extended rank + wall-clock budget sweeps launched
+- wall_budget_sweep: 6 vanilla ranks + 3 LWR allocs × 3 seeds at 300s budget, 27 runs
+- extended_rank_sweep: r ∈ {12, 24, 32} × σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × 5 seeds, 75 runs
+Analysis + plots morning of 29 Jul.
