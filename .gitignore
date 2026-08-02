@@ -42,3 +42,18 @@ Thumbs.db
 !figures/.gitkeep
 !logs/.gitkeep
 !logs/findings.md
+
+# Accidental directories
+notebooks/-/
+
+# Windows Zone.Identifier files
+*:Zone.Identifier
+
+# Sweep logs
+sweep_*.log
+
+# Notebook outputs (large)
+*.ipynb_checkpoints/
+
+# src backups
+src/lwr_eggroll_backup/
