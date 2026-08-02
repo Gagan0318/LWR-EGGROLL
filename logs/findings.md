@@ -102,3 +102,37 @@ Analysis + plots morning of 29 Jul.
 - wall_budget_sweep: 6 vanilla ranks + 3 LWR allocs × 3 seeds at 300s budget, 27 runs
 - extended_rank_sweep: r ∈ {12, 24, 32} × σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × 5 seeds, 75 runs
 Analysis + plots morning of 29 Jul.
+
+---
+
+## Finding 17: Architecture Variation Complete (2 Aug 2026)
+
+**Experiment:** 72 runs across narrow (2h), standard (3h), deep (4h) architectures.
+
+**Sensitivity pilot (n=5):**
+- Input-only: 89.95% (narrow), 89.47% (standard), 89.10% (deep) — stable ~89-90%
+- Hidden-only: 84.21% → 79.46% → 75.77% — degrades with depth
+- Output-only: 78.31% → 76.57% → 73.92% — degrades with depth
+- Ordering input ≫ hidden > output holds on all three architectures
+
+**LWR vs Vanilla vs Reversed (n=3):**
+- Narrow: aligned 87.61% vs vanilla 82.45% (+5.16pp) vs reversed 79.40%
+- Standard: aligned 84.35% vs vanilla 82.80% (+1.55pp) vs reversed 75.55%
+- Deep: aligned 80.36% vs vanilla 77.51% (+2.85pp) vs reversed 73.42%
+
+**Implication:** Sensitivity ordering is architectural, not depth-specific. Input dominance increases with depth. LWR wins on all architectures.
+
+## Finding 18: Experimental Programme Complete (2 Aug 2026)
+
+All 20 experiments (~800+ runs) across 4 datasets and 3 architectures are complete. No further experiments planned. Write-up phase active.
+
+## Finding 19: Dissertation Figures Generated (2 Aug 2026)
+
+Seven publication-quality figures created:
+1. LWR headline comparison (4 datasets)
+2. Sensitivity pilot (3 architectures)
+3. Architecture variation (depth comparison)
+4. Per-layer rank saturation curves
+5. Budget-matched comparison
+6. Population × rank heatmap
+7. Wall-clock budget compounding
