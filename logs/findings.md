@@ -2,9 +2,64 @@
 
 ---
 
+## Shared Experimental Configuration
+
+Unless otherwise stated in individual findings, all experiments use the following configuration:
+
+**Hardware:**
+- GPU: NVIDIA RTX 5060 (8GB VRAM, Blackwell, sm_120)
+- Platform: WSL2 (Ubuntu 24.04) on Windows laptop
+- Driver: 610.74, CUDA 13.3
+
+**Software:**
+- JAX 0.11.0, HyperscaleES (editable install from source), evosax 0.2.0
+- Flax (neural network definition), optax (AdamW optimiser)
+- Python 3.11
+
+**Standard architecture:** MLP [784, 256, 256, 256, 10]
+- Dense_0/kernel: (784, 256) — 200,704 params — input layer
+- Dense_1/kernel: (256, 256) — 65,536 params — hidden layer 1
+- Dense_2/kernel: (256, 256) — 65,536 params — hidden layer 2
+- Dense_3/kernel: (256, 10) — 2,560 params — output layer
+- Total: 334,858 parameters (including biases)
+- Hidden width of 256 matches EGGROLL paper Section 6.2 (3-layer MLP policy, 256 hidden units)
+- ReLU activations between all layers; no activation after output
+
+**Standard hyperparameters:**
+- Population size N: 2048
+- Noise scale σ: 0.05
+- Learning rate α: 0.01
+- Optimiser: AdamW (β₁=0.9, β₂=0.999)
+- Generations: 5000 (or wall-clock capped where noted)
+- Training batch: 512 images (randomly sampled each generation)
+- Test evaluation: full test set, every 50 generations
+- Fitness function: −CrossEntropy (negated so higher = better)
+- Seeds: n=3 per config (standard), n=5 for sensitivity pilots
+
+**Datasets:**
+
+| Dataset | Input dim | Classes | Train size | Test size | Source |
+|---|---|---|---|---|---|
+| MNIST | 784 (28×28×1) | 10 (digits 0–9) | 60,000 | 10,000 | torchvision |
+| Fashion-MNIST | 784 (28×28×1) | 10 (clothing) | 60,000 | 10,000 | torchvision |
+| KMNIST | 784 (28×28×1) | 10 (Kuzushiji) | 60,000 | 10,000 | torchvision |
+| EMNIST-Digits | 784 (28×28×1) | 10 (digits 0–9) | ~240,000 | ~40,000 | torchvision |
+
+All images normalised to [0, 1] by dividing by 255. No augmentation. Flattened from 28×28 to 784.
+
+**LWR rank set:** {0, 1, 2, 4, 8}. Powers of 2 to avoid JAX JIT recompilation. Rank=0 means no perturbation (layer frozen at initialised weights).
+
+**HyperscaleES shape convention:** Weight matrices stored transposed — Flax kernel (784, 256) is stored as (256, 784) in HyperscaleES. The rank_spec dict keys use HyperscaleES convention:
+```
+Standard architecture rank_spec example:
+{(256, 784): 8, (256, 256): 2, (10, 256): 0}
+```
+
+---
+
 ## Hyperparameter Transfer Failure: RL-Tuned ES Settings Diverge on Supervised Classification
 
-**Experiment:** Applied the EGGROLL paper's Brax/IDP hyperparameters (σ=0.5, lr=0.1) to OpenAI-ES on MNIST supervised classification.
+**Configuration:** OpenAI-ES on MNIST with EGGROLL paper's Brax/IDP hyperparameters (σ=0.5, lr=0.1). Architecture: [784, 256, 256, 256, 10]. N=2048.
 
 **Result:** Catastrophic parameter divergence. Fitness fell from −2.9×10⁵ at generation 20 to −1.5×10¹¹ by generation 420. Test accuracy remained at chance (0.098) throughout.
 
@@ -18,9 +73,11 @@
 
 ## evosax 0.2.0 API Breaking Change: Fitness Minimisation Convention
 
-**Observation:** evosax 0.2.0 minimises fitness by default (0.1.x maximised). Code written against the 0.1.x API silently produces anti-optimisation runs on 0.2.0.
+**Configuration:** evosax 0.2.0 baselines (OpenAI-ES, Sep-CMA-ES).
 
-**Resolution:** Return `+cross_entropy` to evosax and let it minimise as a loss. Additionally, `default_params` is a property (not callable) in 0.2.0.
+**Observation:** evosax 0.2.0 minimises fitness by default (0.1.x maximised). Code written against the 0.1.x API silently produces anti-optimisation runs on 0.2.0. Additionally, `default_params` is a property (not callable) in 0.2.0.
+
+**Resolution:** Return `+cross_entropy` to evosax and let it minimise as a loss.
 
 **Implication for LWR-EGGROLL:** Documented for reproducibility. The evosax baselines (OpenAI-ES, Sep-CMA-ES) use the corrected API throughout.
 
@@ -28,7 +85,7 @@
 
 ## Four-Method Baseline Comparison
 
-**Experiment:** Backprop+Adam, OpenAI-ES, Sep-CMA-ES, vanilla EGGROLL r=4. All four datasets, n=3 seeds each.
+**Configuration:** Backprop+Adam (lr=0.001, default Adam), OpenAI-ES (evosax 0.2.0, σ=0.05, lr=0.01, N=2048, Adam internal optimiser), Sep-CMA-ES (evosax 0.2.0, library defaults), vanilla EGGROLL r=4 (HyperscaleES, σ=0.05, lr=0.01, N=2048, AdamW). Architecture: [784, 256, 256, 256, 10]. All four datasets. n=3 seeds each. 5000 generations for ES methods.
 
 | Method | MNIST | Fashion-MNIST | KMNIST | EMNIST-Digits |
 |---|---|---|---|---|
@@ -37,7 +94,7 @@
 | EGGROLL r=4 | 82.72% ± 0.10 | 71.36% ± 0.70 | 45.79% ± 1.27 | 85.76% ± 1.11 |
 | Sep-CMA-ES | 75.51% ± 1.19 | 68.88% ± 0.64 | 42.19% ± 1.37 | 80.57% ± 0.61 |
 
-Sep-CMA-ES exhibits 6× higher seed variance than other methods. One seed consistently hit the wall-clock cap without converging. KMNIST is the hardest task — the gap between gradient-based and gradient-free methods widens on harder datasets.
+Sep-CMA-ES exhibits 6× higher seed variance than other methods (±1.19pp vs ±0.10pp for EGGROLL). One seed consistently hit the wall-clock cap without converging. KMNIST is the hardest task — the gap between gradient-based and gradient-free methods widens on harder datasets.
 
 **Implication for LWR-EGGROLL:** Establishes the performance landscape. LWR is positioned against vanilla EGGROLL within the ES family, not against backprop. EGGROLL at r=4 occupies a Pareto position between OpenAI-ES accuracy and low per-generation cost.
 
@@ -45,7 +102,7 @@ Sep-CMA-ES exhibits 6× higher seed variance than other methods. One seed consis
 
 ## Vanilla EGGROLL Rank Sweep
 
-**Experiment:** Ranks {1, 2, 4, 8, 16, 32} on MNIST and EMNIST-Digits, σ=0.05, n=3 seeds.
+**Configuration:** Ranks {1, 2, 4, 8, 16, 32}. Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=3 seeds. Tested on MNIST and EMNIST-Digits.
 
 **MNIST:**
 
@@ -73,7 +130,7 @@ Inverted-U relationship: very low rank underperforms (insufficient exploration),
 
 ## σ × Rank Interaction Sweep
 
-**Experiment:** σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × r ∈ {1, 2, 4, 8, 16}, n=5 seeds. 125 runs on MNIST.
+**Configuration:** σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × r ∈ {1, 2, 4, 8, 16}. Architecture: [784, 256, 256, 256, 10]. lr=0.01, N=2048, 5000 generations. n=5 seeds. 125 runs on MNIST.
 
 **Result:**
 - Low σ (0.01–0.03): higher rank wins. Small perturbations benefit from more exploration directions.
@@ -88,7 +145,7 @@ Fitness variance scales inversely with rank in the full-network setting, consist
 
 ## Extended Rank Granularity Sweep
 
-**Experiment:** σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × r ∈ {12, 24, 32}, n=5 seeds. 75 runs on MNIST.
+**Configuration:** σ ∈ {0.01, 0.03, 0.05, 0.1, 0.3} × r ∈ {12, 24, 32}. Architecture: [784, 256, 256, 256, 10]. lr=0.01, N=2048, 5000 generations. n=5 seeds. 75 runs on MNIST.
 
 **Result:** At r>16, returns are heavily diminishing. The rank curve flattens.
 
@@ -98,7 +155,7 @@ Fitness variance scales inversely with rank in the full-network setting, consist
 
 ## Population × Rank Interaction
 
-**Experiment:** N ∈ {256, 512, 1024, 4096} × r ∈ {1, 4, 16}, n=3 seeds. 36 runs on MNIST.
+**Configuration:** N ∈ {256, 512, 1024, 4096} × r ∈ {1, 4, 16}. Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, 5000 generations. n=3 seeds. 36 runs on MNIST. N=256 is memory-minimal; N=4096 is near the 8GB GPU limit.
 
 **Result:**
 - N=256: rank is critical — few samples need rich perturbations per sample.
@@ -111,15 +168,18 @@ Fitness variance scales inversely with rank in the full-network setting, consist
 
 ## Two-Phase Sensitivity Pilot
 
-**Experiment:** Phase 1 (isolated variance): perturb only one layer group at a time, others frozen at rank=0, n=5 seeds. Phase 2 (causal ablation): drop each layer to rank=1 from baseline r=4 and r=8, measure accuracy degradation, n=5 seeds. Run on all four datasets.
+**Configuration:**
+- Phase 1 (isolated variance): Perturb only one layer group at a time at r=4, others frozen at r=0. Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=5 seeds per condition (input_only, hidden_only, output_only).
+- Phase 2 (causal ablation): Baseline at uniform r=4. Drop each layer group to r=1 while others stay at r=4. Same config. n=5 seeds.
+- Run on all four datasets.
 
 **Phase 1 — Isolated perturbation accuracy (MNIST):**
 
-| Condition | Accuracy |
-|---|---|
-| input_only | 88.74% |
-| hidden_only | 78.93% |
-| output_only | 74.68% |
+| Condition | Rank spec | Accuracy |
+|---|---|---|
+| input_only | {input:4, hidden:0, output:0} | 88.74% |
+| hidden_only | {input:0, hidden:4, output:0} | 78.93% |
+| output_only | {input:0, hidden:0, output:4} | 74.68% |
 
 **Phase 2 — Causal ablation (MNIST):**
 
@@ -137,13 +197,16 @@ Both phases agree: **input ≫ hidden > output** on all four datasets. The outpu
 
 ## LWR Validation: Initial MNIST Results
 
-**Experiment:** Uniform r=4 vs LWR (8,2,1) vs LWR (8,2,0) on MNIST, n=5 seeds.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=5 seeds. Tested: uniform r=4, LWR (8,2,1), LWR (8,2,0). Rank specs in HyperscaleES convention:
+- Uniform r=4: rank_spec=4
+- LWR (8,2,1): {(256,784):8, (256,256):2, (10,256):1}
+- LWR (8,2,0): {(256,784):8, (256,256):2, (10,256):0}
 
-| Configuration | Budget | Accuracy |
+| Configuration | Total rank budget | Accuracy |
 |---|---|---|
-| Uniform r=4 | 12 | 82.66% ± 0.09 |
-| LWR (8,2,1) | 11 | **88.86% ± 0.18** |
-| LWR (8,2,0) | 10 | **88.88% ± 0.22** |
+| Uniform r=4 | 4+4+4+4=16 | 82.66% ± 0.09 |
+| LWR (8,2,1) | 8+2+2+1=13 | **88.86% ± 0.18** |
+| LWR (8,2,0) | 8+2+2+0=12 | **88.88% ± 0.22** |
 
 LWR beats uniform by **6.2 percentage points** at lower total rank budget. LWR (8,2,0) and (8,2,1) are statistically indistinguishable — freezing the output layer entirely does not hurt.
 
@@ -153,17 +216,17 @@ LWR beats uniform by **6.2 percentage points** at lower total rank budget. LWR (
 
 ## LWR Allocation Controls
 
-**Experiment:** Multiple LWR allocations including reversed, uniform, and various non-standard configs. n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=3 seeds on MNIST. Multiple LWR allocations tested.
 
-| Config | Allocation | Accuracy |
-|---|---|---|
-| lwr_8_2_0 | Aligned | ~84.3% |
-| lwr_4_4_4 | Uniform (=vanilla r=4) | 82.40% ± 1.15 |
-| lwr_0_2_8 | Reversed | ~78% |
-| lwr_2_2_2 | Low uniform | — |
-| lwr_4_1_0 | Conservative aligned | — |
+| Config | Rank spec | Total budget | Accuracy |
+|---|---|---|---|
+| lwr_8_2_0 | {input:8, hidden:2, output:0} | 12 | ~84.3% |
+| lwr_4_4_4 | {input:4, hidden:4, output:4} = vanilla r=4 | 16 | 82.40% ± 1.15 |
+| lwr_0_2_8 | {input:0, hidden:2, output:8} (reversed) | 10 | ~78% |
+| lwr_2_2_2 | {input:2, hidden:2, output:2} | 8 | — |
+| lwr_4_1_0 | {input:4, hidden:1, output:0} | 6 | — |
 
-**Correctness check:** lwr_4_4_4 exactly matches vanilla r=4 (82.40%), confirming the LWR code path introduces no bugs.
+**Correctness check:** lwr_4_4_4 exactly matches vanilla r=4 (82.40%), confirming the LWR code path introduces no bugs. Both use `_train_hyperscalees_common` — identical training dynamics, only `noiser_class` and `rank_spec` differ.
 
 **Implication for LWR-EGGROLL:** The ~11pp gap between aligned and reversed cannot be attributed to noise. The sensitivity ordering is principled. The correctness check proves LWR and vanilla share identical dynamics when given uniform rank.
 
@@ -171,7 +234,7 @@ LWR beats uniform by **6.2 percentage points** at lower total rank budget. LWR (
 
 ## Cross-Dataset Generalisation
 
-**Experiment:** Full LWR suite on Fashion-MNIST, KMNIST, EMNIST-Digits, n=3 seeds.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=3 seeds. Full LWR suite (aligned, reversed, vanilla, controls) on Fashion-MNIST, KMNIST, EMNIST-Digits. Same rank specs as MNIST experiments.
 
 | Dataset | LWR aligned | Best vanilla | Reversed | Aligned–Reversed gap |
 |---|---|---|---|---|
@@ -188,7 +251,7 @@ LWR wins on all four datasets. Reversed is worst on all four. On EMNIST, lwr_8_4
 
 ## Transfer Test: MNIST-Derived Allocation on Other Datasets
 
-**Experiment:** Apply the MNIST-derived allocation (8,2,0) to Fashion-MNIST and KMNIST without re-running the sensitivity pilot. n=3 seeds.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=3 seeds. Apply MNIST-derived allocation {(256,784):8, (256,256):2, (10,256):0} directly to Fashion-MNIST and KMNIST without re-running the sensitivity pilot.
 
 **Result:** The MNIST-derived allocation still beats vanilla on both datasets.
 
@@ -198,7 +261,7 @@ LWR wins on all four datasets. Reversed is worst on all four. On EMNIST, lwr_8_4
 
 ## EMNIST-Digits Full Suite
 
-**Experiment:** Complete replication of all experiment types on EMNIST-Digits (240K training examples, 10 classes). n=3 seeds.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. n=3 seeds (n=5 for pilot). EMNIST-Digits: 240,000 training images, 40,000 test images, 10 classes.
 
 **Vanilla rank sweep:**
 
@@ -211,21 +274,21 @@ LWR wins on all four datasets. Reversed is worst on all four. On EMNIST, lwr_8_4
 
 **LWR allocations:**
 
-| Config | Accuracy |
-|---|---|
-| lwr_8_4_0 | **87.95% ± 0.73** |
-| lwr_8_2_0 | 87.52% ± 0.43 |
-| lwr_4_1_0 | 87.00% ± 0.58 |
-| lwr_4_4_4 (=vanilla r=4) | 85.76% ± 1.11 |
-| lwr_0_2_8 (reversed) | 81.47% ± 0.35 |
+| Config | Rank spec | Accuracy |
+|---|---|---|
+| lwr_8_4_0 | {input:8, hidden:4, output:0} | **87.95% ± 0.73** |
+| lwr_8_2_0 | {input:8, hidden:2, output:0} | 87.52% ± 0.43 |
+| lwr_4_1_0 | {input:4, hidden:1, output:0} | 87.00% ± 0.58 |
+| lwr_4_4_4 | {all:4} = vanilla r=4 | 85.76% ± 1.11 |
+| lwr_0_2_8 | {input:0, hidden:2, output:8} (reversed) | 81.47% ± 0.35 |
 
 **Sensitivity pilot (n=5):**
 
-| Condition | Accuracy |
-|---|---|
-| input_only | 91.43% |
-| hidden_only | 83.77% |
-| output_only | 79.01% |
+| Condition | Rank spec | Accuracy |
+|---|---|---|
+| input_only | {input:4, others:0} | 91.43% |
+| hidden_only | {hidden:4, others:0} | 83.77% |
+| output_only | {output:4, others:0} | 79.01% |
 
 Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.95% — the single highest ES accuracy in the programme.
 
@@ -235,7 +298,7 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## σ × LWR Interaction
 
-**Experiment:** LWR (8,2,0) vs vanilla r=4 at σ ∈ {0.01, 0.03, 0.05, 0.1}, n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. N=2048, 5000 generations. LWR (8,2,0) vs vanilla r=4 at σ ∈ {0.01, 0.03, 0.05, 0.1}. lr=0.01. n=3 seeds on MNIST.
 
 | σ | Vanilla r=4 | LWR (8,2,0) | Advantage |
 |---|---|---|---|
@@ -250,54 +313,56 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## Input Rank Sweep
 
-**Experiment:** Fix hidden=2, output=0. Sweep input ∈ {1, 2, 4, 8}, n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. Fix hidden=2, output=0. Sweep input ∈ {1, 2, 4, 8}. n=3 seeds on MNIST.
 
-| Config | Input rank | Budget | Accuracy |
+| Config | Rank spec | Total budget | Accuracy |
 |---|---|---|---|
-| lwr_1_2_0 | 1 | 3 | 82.58% ± 0.64 |
-| lwr_2_2_0 | 2 | 4 | 83.41% ± 0.65 |
-| lwr_4_2_0 | 4 | 6 | **84.78% ± 0.84** |
-| lwr_8_2_0 | 8 | 10 | 84.30% ± 0.60 |
+| lwr_1_2_0 | {input:1, hidden:2, output:0} | 5 | 82.58% ± 0.64 |
+| lwr_2_2_0 | {input:2, hidden:2, output:0} | 6 | 83.41% ± 0.65 |
+| lwr_4_2_0 | {input:4, hidden:2, output:0} | 8 | **84.78% ± 0.84** |
+| lwr_8_2_0 | {input:8, hidden:2, output:0} | 12 | 84.30% ± 0.60 |
 
-**Implication for LWR-EGGROLL:** Input rank saturates at r=4. lwr_4_2_0 (budget 6) achieves comparable accuracy to lwr_8_2_0 (budget 10) at 40% less total rank. The practical recommendation is r=4 as the maximum input rank.
+**Implication for LWR-EGGROLL:** Input rank saturates at r=4. lwr_4_2_0 (budget 8) achieves comparable accuracy to lwr_8_2_0 (budget 12) at 33% less total rank. The practical recommendation is r=4 as the maximum input rank.
 
 ---
 
 ## Output Rank Sweep
 
-**Experiment:** Fix input=8, hidden=2. Sweep output ∈ {0, 1, 2, 4, 8}, n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. Fix input=8, hidden=2. Sweep output ∈ {0, 1, 2, 4, 8}. n=3 seeds on MNIST.
 
-| Config | Output rank | Accuracy |
+| Config | Rank spec | Accuracy |
 |---|---|---|
-| lwr_8_2_0 | 0 | **84.30% ± 0.60** |
-| lwr_8_2_1 | 1 | 82.26% ± 0.65 |
-| lwr_8_2_2 | 2 | 82.21% ± 0.89 |
-| lwr_8_2_4 | 4 | 82.10% ± 0.34 |
-| lwr_8_2_8 | 8 | 82.71% ± 1.13 |
+| lwr_8_2_0 | {input:8, hidden:2, output:0} | **84.30% ± 0.60** |
+| lwr_8_2_1 | {input:8, hidden:2, output:1} | 82.26% ± 0.65 |
+| lwr_8_2_2 | {input:8, hidden:2, output:2} | 82.21% ± 0.89 |
+| lwr_8_2_4 | {input:8, hidden:2, output:4} | 82.10% ± 0.34 |
+| lwr_8_2_8 | {input:8, hidden:2, output:8} | 82.71% ± 1.13 |
 
-**Implication for LWR-EGGROLL:** Any output rank > 0 hurts by ~2pp. The output layer should be frozen — perturbations to the small 256→10 matrix add noise to logits without adding useful exploration. This is the cleanest evidence for the rank=0 extension.
+**Implication for LWR-EGGROLL:** Any output rank > 0 hurts by ~2pp. The output layer (256→10, 2,560 params) should be frozen — perturbations to this small matrix add noise to logits without adding useful exploration. This is the cleanest evidence for the rank=0 extension.
 
 ---
 
 ## Hidden Rank Granularity Sweep
 
-**Experiment:** Fix input=8, output=0. Sweep hidden ∈ {0, 1, 2, 4, 8}, n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. Fix input=8, output=0. Sweep hidden ∈ {0, 1, 2, 4, 8}. n=3 seeds on MNIST.
 
-**Implication for LWR-EGGROLL:** Hidden rank of 2 is the sweet spot. r=0 (freeze hidden) significantly hurts; r=4 and r=8 offer marginal improvement over r=2 at higher cost. Confirms (8,2,0) as near-optimal for the standard architecture.
+**Result:** Hidden rank of 2 is the sweet spot. r=0 (freeze hidden) significantly hurts; r=4 and r=8 offer marginal improvement over r=2 at higher cost.
+
+**Implication for LWR-EGGROLL:** Confirms (8,2,0) as near-optimal for the standard architecture. Combined with input saturation at r=4, the refined practical recommendation is (4,2,0).
 
 ---
 
 ## Budget-Matched Comparison
 
-**Experiment:** All configs have total per-shape rank budget = 12, isolating allocation from total cost. n=3 seeds on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048, 5000 generations. All configs have total per-layer rank budget = 16, isolating allocation from total cost. n=3 seeds on MNIST.
 
-| Config | Allocation | Budget | Accuracy |
+| Config | Rank spec | Budget | Accuracy |
 |---|---|---|---|
-| lwr_8_4_0 | input=8, h=4, out=0 | 12 | **84.01% ± 0.42** |
-| vanilla r=4 | all=4 | 12 | 82.40% ± 1.15 |
-| lwr_4_4_4 (=vanilla) | all=4 | 12 | 82.40% ± 1.15 |
-| lwr_8_2_2 | input=8, h=2, out=2 | 12 | 82.21% ± 0.89 |
-| lwr_0_4_8 | reversed | 12 | 77.18% ± 0.56 |
+| lwr_8_4_0 | {input:8, hidden:4, output:0} | 8+4+4+0=16 | **84.01% ± 0.42** |
+| vanilla r=4 | {all:4} | 4+4+4+4=16 | 82.40% ± 1.15 |
+| lwr_4_4_4 (=vanilla) | {all:4} | 4+4+4+4=16 | 82.40% ± 1.15 |
+| lwr_8_2_2 | {input:8, hidden:2, output:2} | 8+2+2+2=14 | 82.21% ± 0.89 |
+| lwr_0_4_8 | {input:0, hidden:4, output:8} (reversed) | 0+4+4+8=16 | 77.18% ± 0.56 |
 
 **Implication for LWR-EGGROLL:** At identical total rank budget, LWR wins by 1.61pp. This is the cleanest evidence for the contribution — the improvement is purely from where rank is placed, not how much total rank is used. Reversed at matched budget is 6.83pp below aligned.
 
@@ -305,18 +370,18 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## Per-Generation Wall-Clock Cost
 
-**Experiment:** ms/gen measurements for all configs on MNIST.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048. ms/gen measurements for all configs on MNIST.
 
-| Config | ms/gen | Relative to vanilla r=4 |
-|---|---|---|
-| lwr_8_0_0 | **72.4** | 0.69× (31% cheaper) |
-| vanilla r=1 | 77.3 | 0.74× |
-| lwr_8_2_0 | 102.5 | 0.98× |
-| lwr_8_4_0 | 103.7 | 0.99× |
-| vanilla r=4 | 104.6 | 1.00× (baseline) |
-| vanilla r=8 | 110.9 | 1.06× |
-| vanilla r=16 | 125.4 | 1.20× |
-| vanilla r=32 | 135.2 | 1.29× |
+| Config | Rank spec | ms/gen | Relative to vanilla r=4 |
+|---|---|---|---|
+| lwr_8_0_0 | {input:8, hidden:0, output:0} | **72.4** | 0.69× (31% cheaper) |
+| vanilla r=1 | {all:1} | 77.3 | 0.74× |
+| lwr_8_2_0 | {input:8, hidden:2, output:0} | 102.5 | 0.98× |
+| lwr_8_4_0 | {input:8, hidden:4, output:0} | 103.7 | 0.99× |
+| vanilla r=4 | {all:4} | 104.6 | 1.00× (baseline) |
+| vanilla r=8 | {all:8} | 110.9 | 1.06× |
+| vanilla r=16 | {all:16} | 125.4 | 1.20× |
+| vanilla r=32 | {all:32} | 135.2 | 1.29× |
 
 **Implication for LWR-EGGROLL:** LWR (8,2,0) is essentially the same cost as vanilla r=4 but achieves ~2pp higher accuracy. LWR (8,0,0) is 31% faster and achieves the highest accuracy (~89.1%). LWR is both more accurate and cheaper per generation — the "better AND cheaper" claim is quantified.
 
@@ -324,9 +389,9 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## Wall-Clock Budget Sweep (MNIST, 300s)
 
-**Experiment:** Six vanilla ranks + three LWR allocations, fixed 300s wall-clock cap, n=3 seeds.
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048. Six vanilla ranks {1,2,4,8,16,32} + three LWR allocations {(8,2,0), (8,4,0), (4,2,1)}. Fixed 300s wall-clock cap. n=3 seeds.
 
-**Result:** LWR (8,2,0) outperforms best vanilla by ~1.6pp under 300s budget. Lower-rank configs complete more generations but still lose to LWR which combines cheaper iterations with better allocation.
+**Result:** LWR (8,2,0) at 84.23% outperforms best vanilla (r=8 at 82.51%) by ~1.6pp under 300s budget. Lower-rank configs complete more generations but still lose to LWR which combines cheaper iterations with better allocation.
 
 **Implication for LWR-EGGROLL:** Under real-world compute constraints (fixed wall-clock), LWR's advantage holds and is practically meaningful.
 
@@ -334,13 +399,13 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## Tight Budget Runs (MNIST, 60s & 120s)
 
-**Experiment:** Same as wall-clock sweep but at 60s and 120s caps.
+**Configuration:** Same as wall-clock sweep but at 60s and 120s caps. Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048. n=3 seeds.
 
-| Budget | LWR advantage over best vanilla |
-|---|---|
-| 60s | +1.9pp |
-| 120s | +1.7pp |
-| 300s | +1.6pp |
+| Budget | LWR (8,2,0) | Best vanilla | LWR advantage |
+|---|---|---|---|
+| 60s | ~79.5% | ~77.6% | +1.9pp |
+| 120s | ~83.2% | ~81.5% | +1.7pp |
+| 300s | ~84.2% | ~82.5% | +1.6pp |
 
 **Implication for LWR-EGGROLL:** Advantage grows as compute tightens. LWR's cheaper iterations compound more under time pressure. LWR is most valuable precisely when compute is scarce — the practical regime for researchers without hyperscale resources.
 
@@ -348,7 +413,7 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## EMNIST Wall-Clock Budget
 
-**Experiment:** Same wall-clock design on EMNIST-Digits (240K training examples).
+**Configuration:** Architecture: [784, 256, 256, 256, 10]. σ=0.05, lr=0.01, N=2048. Same wall-clock design on EMNIST-Digits (240K training examples). 300s cap. n=3 seeds.
 
 **Result:** LWR advantage stable at ~2.7pp across budgets, replicating the MNIST pattern.
 
@@ -358,7 +423,15 @@ Input-only (91.43%) nearly matches OpenAI-ES (92.30%). lwr_8_4_0 seed=2 hit 88.9
 
 ## Architecture Variation
 
-**Experiment:** Three architectures — narrow [784,256,256,10] (2h), standard [784,256,256,256,10] (3h), deep [784,256,256,256,256,10] (4h). Each with sensitivity pilot (n=5), vanilla r=4 (n=3), LWR aligned (n=3), LWR reversed (n=3). 72 runs.
+**Configuration:** Three architectures on MNIST. σ=0.05, lr=0.01, N=2048, 5000 generations.
+
+| Name | Architecture | Hidden layers | ~Params | Layer shapes (HyperscaleES) |
+|---|---|---|---|---|
+| Narrow (2h) | [784, 256, 256, 10] | 2 | ~269K | input:(256,784), hidden:(256,256), output:(10,256) |
+| Standard (3h) | [784, 256, 256, 256, 10] | 3 | ~335K | input:(256,784), hidden:(256,256), output:(10,256) |
+| Deep (4h) | [784, 256, 256, 256, 256, 10] | 4 | ~400K | input:(256,784), hidden:(256,256), output:(10,256) |
+
+Each with: sensitivity pilot (n=5), vanilla r=4 (n=3), LWR aligned (n=3), LWR reversed (n=3). 72 runs total.
 
 **Sensitivity pilot (n=5):**
 
@@ -382,9 +455,45 @@ Input-only accuracy is stable at ~89–90% regardless of depth. Hidden-only and 
 
 ---
 
+## Tapered Architecture: Moving Hidden Layer
+
+**Configuration:** Architecture: [784, 512, 256, 128, 10]. σ=0.05, lr=0.01, N=2048, 300s wall-clock cap. All hidden shapes unique — LWR can assign per-hidden-layer rank.
+
+| Layer | Shape (HyperscaleES) | Parameters |
+|---|---|---|
+| Input (Dense_0) | (512, 784) | 401,408 |
+| Hidden1 (Dense_1) | (256, 512) | 131,072 |
+| Hidden2 (Dense_2) | (128, 256) | 32,768 |
+| Output (Dense_3) | (10, 128) | 1,280 |
+
+**Sensitivity pilot (n=5):**
+
+| Condition | Rank spec | Accuracy |
+|---|---|---|
+| input_only | {input:4, h1:0, h2:0, out:0} | 90.02% ± 0.41 |
+| hidden1_only | {input:0, h1:4, h2:0, out:0} | 86.04% ± 0.54 |
+| hidden2_only | {input:0, h1:0, h2:4, out:0} | 81.20% ± 1.10 |
+| output_only | {input:0, h1:0, h2:0, out:4} | 77.02% ± 0.35 |
+
+Four distinct sensitivity levels. Hidden1 vs hidden2 gap is 4.8pp with non-overlapping error bars — they are clearly different.
+
+**LWR comparison (n=3):**
+
+| Config | Rank spec | Accuracy |
+|---|---|---|
+| LWR aligned | {input:8, h1:4, h2:2, output:0} | **80.64% ± 1.19** |
+| LWR reversed | {input:0, h1:2, h2:4, output:8} | 72.34% ± 1.81 |
+| Vanilla r=4 | {all:4} | 71.78% ± 2.33 |
+
+LWR aligned beats vanilla by **+8.86pp** — larger than the +6.2pp on the uniform-width architecture.
+
+**Implication for LWR-EGGROLL:** When hidden layers have unique shapes, the sensitivity pilot reveals a four-level ordering rather than three. Layers closer to the raw input with larger weight matrices are consistently more sensitive. The additional allocation granularity yields a larger LWR advantage (+8.9pp vs +6.2pp), providing preliminary evidence that architectures with varying hidden widths are better suited to layer-wise rank allocation.
+
+---
+
 ## Experimental Programme Complete
 
-All 20 experiments (~800+ runs) across 4 datasets (MNIST, Fashion-MNIST, KMNIST, EMNIST-Digits) and 3 architectures (2h, 3h, 4h) are complete. Seven publication-quality figures generated. No further experiments planned.
+All experiments (~800+ runs) across 4 datasets (MNIST, Fashion-MNIST, KMNIST, EMNIST-Digits) and 3+ architectures complete. Seven publication-quality figures generated. Additional tapered architecture and position-based experiments in progress.
 
 ---
 
@@ -394,7 +503,7 @@ All 20 experiments (~800+ runs) across 4 datasets (MNIST, Fashion-MNIST, KMNIST,
 2. **The sensitivity ordering (input ≫ hidden > output) generalises** across 4 datasets and 3 architectures — it is architectural, not task-specific.
 3. **Reversed allocations are catastrophically bad** (4–11pp below aligned), confirming the ordering is principled.
 4. **Correctness check passes:** lwr_4_4_4 exactly matches vanilla r=4, confirming zero implementation artifact.
-5. **LWR achieves better accuracy with less total rank budget** (10 vs 12), making it both more accurate and cheaper per generation.
+5. **LWR achieves better accuracy with less total rank budget** (12 vs 16), making it both more accurate and cheaper per generation.
 6. **LWR's advantage grows under tight wall-clock budgets** (1.9pp at 60s vs 1.6pp at 300s).
 7. **Population × rank interaction validates the aggregate rank Nr theory** from the EGGROLL paper.
 8. **The σ × rank interaction** reveals that optimal rank depends on noise scale — not studied in the original paper.
@@ -402,3 +511,4 @@ All 20 experiments (~800+ runs) across 4 datasets (MNIST, Fashion-MNIST, KMNIST,
 10. **Input rank saturates at r=4** — the practical recommendation is (4,2,0) rather than (8,2,0) for equivalent accuracy at lower cost.
 11. **Budget-matched comparison isolates the pure allocation effect** at +1.61pp with identical total rank budget.
 12. **The MNIST-derived allocation transfers** to other datasets without re-piloting.
+13. **Tapered architectures unlock finer-grained allocation** — hidden layers with unique shapes show distinct sensitivities, yielding larger LWR advantages (+8.9pp vs +6.2pp).
