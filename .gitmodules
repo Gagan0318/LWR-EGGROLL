@@ -1,0 +1,3 @@
+[submodule "HyperscaleES"]
+	path = HyperscaleES
+	url = https://github.com/ESHyperscale/HyperscaleES.git
