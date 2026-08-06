@@ -281,7 +281,7 @@ class AdaptiveSensitivityPilot:
 
     def _isolation_spec(self, target_shape: Tuple[int, int], target_rank: int) -> dict:
         """Rank spec that perturbs only the target layer."""
-        spec = {s: 0 for s in self.shapes_list}
+        spec = {s: 1 for s in self.shapes_list}
         spec[target_shape] = target_rank
         return spec
 
