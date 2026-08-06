@@ -456,7 +456,7 @@ class AdaptiveSensitivityPilot:
 
             # Available non-zero ranks, descending
             available_ranks = sorted(
-                [r for r in FULL_RANK_SET if r > 0], reverse=True
+                [r for r in FULL_RANK_SET if 0 < r <= self.max_rank], reverse=True
             )
 
             allocation = {}
