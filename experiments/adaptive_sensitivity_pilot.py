@@ -210,7 +210,7 @@ class AdaptiveSensitivityPilot:
             train_fn(seed, X_train, y_train, X_test, y_test,
                      rank_spec: dict, label: str)
             -> dict with at least:
-                "test_acc": float (final test accuracy),
+                "best_test_acc": float (final test accuracy),
                 "fitness_variance_history": list[float] (optional, for Phase 1)
             If fitness_variance_history is not returned, the pilot will
             use test accuracy as the Phase 1 metric instead.
@@ -280,7 +280,7 @@ class AdaptiveSensitivityPilot:
         return dict(rank_per_shape)
 
     def _isolation_spec(self, target_shape: Tuple[int, int], target_rank: int) -> dict:
-        """Rank spec that perturbs only the target layer."""
+        """Rank spec that elevates the target layer above the rank-1 background."""
         spec = {s: 1 for s in self.shapes_list}
         spec[target_shape] = target_rank
         return spec
@@ -314,7 +314,7 @@ class AdaptiveSensitivityPilot:
                 label=label,
             )
             elapsed = time.time() - t0
-            print(f" acc={result['test_acc']:.4f}  ({elapsed:.1f}s)")
+            print(f" acc={result['best_test_acc']:.4f}  ({elapsed:.1f}s)")
             results.append(result)
         return results
 
@@ -341,7 +341,7 @@ class AdaptiveSensitivityPilot:
 
             run_results = self._run_condition(spec, label, seeds)
 
-            # Extract fitness variance if available, else use test_acc
+            # Extract fitness variance if available, else use best_test_acc
             # as a proxy for "how much signal this layer generates"
             if "fitness_variance_history" in run_results[0]:
                 # Use mean fitness variance across generations per seed
