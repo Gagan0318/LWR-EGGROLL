@@ -1,8 +1,10 @@
 """Adaptive Sensitivity Pilot for LWR-EGGROLL.
 
 Automatically determines the pilot regime based on model scale:
-  - ALLOCATION mode (standard):  rank set {0, 1, 2, 4, 8}, Phase 2 drops target to r=1
-  - BINARY INCLUSION mode (large-scale): rank set {0, 1}, Phase 2 drops target to r=0
+  - ALLOCATION mode (standard):  rank set {0, 1, 2, 4, 8}, Phase 1 elevates target
+    above rank-1 background, Phase 2 drops target to r=1
+  - BINARY INCLUSION mode (large-scale): rank set {0, 1}, Phase 1 is skipped (no rank
+    differential possible), Phase 2 drops each layer to r=0
 
 The regime is determined per-layer by comparing min(m, n) of each weight
 matrix against `max_rank`. If the effective maximum rank across all layers
@@ -119,12 +121,15 @@ class PilotResult:
             f"ADAPTIVE SENSITIVITY PILOT — {self.mode.upper()} MODE",
             f"{'='*60}",
             "",
-            "Phase 1: Isolated Fitness Variance",
+            "Phase 1: Elevated Fitness Variance",
             "-" * 40,
         ]
-        for r in sorted(self.phase1_results, key=lambda x: x.mean, reverse=True):
-            lines.append(f"  {r.layer_name:>10s}  {r.shape}  "
-                         f"variance = {r.mean:.6f} ± {r.std:.6f}")
+        if self.phase1_results:
+            for r in sorted(self.phase1_results, key=lambda x: x.mean, reverse=True):
+                lines.append(f"  {r.layer_name:>10s}  {r.shape}  "
+                             f"variance = {r.mean:.6f} ± {r.std:.6f}")
+        else:
+            lines.append("  Skipped (binary inclusion mode — no rank differential)")
 
         lines += [
             "",
@@ -279,8 +284,8 @@ class AdaptiveSensitivityPilot:
         """Build rank_spec dict from per-shape assignments."""
         return dict(rank_per_shape)
 
-    def _isolation_spec(self, target_shape: Tuple[int, int], target_rank: int) -> dict:
-        """Rank spec that elevates the target layer above the rank-1 background."""
+    def _elevation_spec(self, target_shape: Tuple[int, int], target_rank: int) -> dict:
+        """Rank spec with all layers at rank-1 background and target elevated."""
         spec = {s: 1 for s in self.shapes_list}
         spec[target_shape] = target_rank
         return spec
@@ -321,23 +326,23 @@ class AdaptiveSensitivityPilot:
     # ── Phase 1 ─────────────────────────────────────────────────────
 
     def _run_phase1(self, seeds: List[int]) -> List[PhaseResult]:
-        """Phase 1: Isolated fitness variance per layer."""
+        """Phase 1: Elevated fitness variance per layer."""
         print("\n" + "=" * 50)
         print("PHASE 1: Isolated Fitness Variance")
         print("=" * 50)
 
         phase1_results = []
         for shape, name in zip(self.shapes_list, self.names_list):
-            # In binary mode, isolate at r=1. In allocation mode, isolate
+            # In binary mode, elevate at r=1. In allocation mode, elevate
             # at the per-layer max rank to get the strongest signal.
             if self.mode == "binary_inclusion":
                 iso_rank = 1
             else:
                 iso_rank = min(self.per_layer_max_rank[shape], self.max_rank)
 
-            spec = self._isolation_spec(shape, iso_rank)
-            label = f"phase1_isolate_{name}_r{iso_rank}"
-            print(f"\n  Layer: {name} {shape}, isolated at r={iso_rank}")
+            spec = self._elevation_spec(shape, iso_rank)
+            label = f"phase1_elevate_{name}_r{iso_rank}"
+            print(f"\n  Layer: {name} {shape}, elevated to r={iso_rank}")
 
             run_results = self._run_condition(spec, label, seeds)
 
@@ -352,10 +357,10 @@ class AdaptiveSensitivityPilot:
                 metric = "fitness_variance"
             else:
                 # Fallback: use test accuracy as a proxy.
-                # Higher accuracy when isolated = layer generates more
+                # Higher accuracy when elevated = layer generates more
                 # useful signal on its own.
                 values = [r["best_test_acc"] for r in run_results]
-                metric = "test_accuracy_isolated"
+                metric = "test_accuracy_elevated"
 
             phase1_results.append(PhaseResult(
                 layer_name=name,
@@ -436,15 +441,15 @@ class AdaptiveSensitivityPilot:
 
         if self.mode == "binary_inclusion":
             # Binary decision: include (r=1) or exclude (r=0)
+            # Uses Phase 2 only — Phase 1 is skipped in binary mode
             allocation = {}
-            for r1 in phase1_results:
-                p2 = p2_by_shape[r1.shape]
+            for p2 in phase2_results:
                 if p2.mean > 0:
                     # Freezing this layer hurts accuracy → keep it
-                    allocation[r1.shape] = 1
+                    allocation[p2.shape] = 1
                 else:
                     # Freezing this layer is neutral or helps → exclude it
-                    allocation[r1.shape] = 0
+                    allocation[p2.shape] = 0
             return allocation
 
         else:
@@ -508,8 +513,14 @@ class AdaptiveSensitivityPilot:
 
         t_start = time.time()
 
-        # Phase 1
-        phase1_results = self._run_phase1(seeds)
+        # Phase 1: skip in binary inclusion mode (no rank differential possible)
+        if self.mode == "binary_inclusion":
+            print("\nSkipping Phase 1 — binary inclusion mode has no rank")
+            print("differential (all layers would be rank 1). Proceeding")
+            print("directly to Phase 2 drop-to-zero ablation.\n")
+            phase1_results = []
+        else:
+            phase1_results = self._run_phase1(seeds)
 
         # Phase 2
         baseline_acc, phase2_results = self._run_phase2(seeds)
@@ -521,11 +532,18 @@ class AdaptiveSensitivityPilot:
         shape_to_name = dict(zip(self.shapes_list, self.names_list))
         allocation_named = {shape_to_name[s]: r for s, r in allocation.items()}
 
-        # Sensitivity ordering from Phase 1 (descending)
-        ordering = [
-            r.layer_name
-            for r in sorted(phase1_results, key=lambda x: x.mean, reverse=True)
-        ]
+        # Sensitivity ordering: from Phase 1 in allocation mode,
+        # from Phase 2 degradation in binary inclusion mode
+        if phase1_results:
+            ordering = [
+                r.layer_name
+                for r in sorted(phase1_results, key=lambda x: x.mean, reverse=True)
+            ]
+        else:
+            ordering = [
+                r.layer_name
+                for r in sorted(phase2_results, key=lambda x: x.mean, reverse=True)
+            ]
 
         total_budget = sum(allocation.values())
         elapsed = time.time() - t_start
