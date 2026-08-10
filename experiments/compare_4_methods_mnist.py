@@ -426,7 +426,9 @@ from hyperscalees.noiser.lwr_eggroll import LWREggRoll
 
 
 def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
-                                noiser_class, rank_spec, label):
+                                noiser_class, rank_spec, label,
+                                max_gens=None, return_checkpoint=False,
+                                initial_params=None):
     """Shared training body for EGGROLL and LWR-EGGROLL.
 
     Differs only in `noiser_class` (EggRoll vs LWREggRoll) and `rank_spec`
@@ -453,6 +455,10 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
         dtype="float32",
     )
     es_tree_key = hs.models.common.simple_es_tree_key(params, es_key, scan_map)
+
+    # Checkpoint support: swap in pre-trained params if provided
+    if initial_params is not None:
+        params = initial_params
 
     n_params = sum(x.size for x in jax.tree_util.tree_leaves(params))
     print(f"[{label} seed={seed}] param count: {n_params:,}")
@@ -509,6 +515,7 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
     gen = 0
 
     fitness_variance_history = []
+    fitness_mean_history = []
     n_train = X_train.shape[0]
     num_envs = CFG.eggroll_pop
     gen = 0
@@ -526,12 +533,16 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
 
         raw_fitness = jit_pop_fitness(noiser_params, params, iterinfo, X_batch, y_batch)
         fitness_variance_history.append((gen, float(jnp.var(raw_fitness))))
+        fitness_mean_history.append((gen, float(jnp.mean(raw_fitness))))
         fitness = NOISER.convert_fitnesses(frozen_noiser_params, noiser_params, raw_fitness)
 
         noiser_params, params = jit_update(noiser_params, params, fitness, iterinfo)
 
         gen += 1
 
+        if max_gens is not None and gen >= max_gens:
+            tracker.stop_reason = "max_gens"
+            break
         if gen % CFG.eval_every_gens == 0:
             test_acc = evaluate_mean_test_acc(noiser_params, params)
             stop = tracker.update(gen, test_acc)
@@ -550,6 +561,11 @@ def _train_hyperscalees_common(seed, X_train, y_train, X_test, y_test,
     result["seed"] = seed
     result["n_params"] = n_params
     result["fitness_variance_history"] = fitness_variance_history
+    result["fitness_mean_history"] = fitness_mean_history
+
+    if return_checkpoint:
+        result["checkpoint_params"] = params
+        result["checkpoint_noiser_params"] = noiser_params
 
     if isinstance(rank_spec, dict):
         rank_hp = {str(k): v for k, v in rank_spec.items()}
@@ -584,13 +600,18 @@ def train_eggroll(seed: int, X_train, y_train, X_test, y_test, rank: int = None)
 
 
 def train_lwr_eggroll(seed: int, X_train, y_train, X_test, y_test,
-                       rank_spec, label: str) -> dict:
+                       rank_spec, label: str,
+                       max_gens=None, return_checkpoint=False,
+                       initial_params=None) -> dict:
     """LWR-EGGROLL: per-shape rank variant. rank_spec is int or dict."""
     return _train_hyperscalees_common(
         seed, X_train, y_train, X_test, y_test,
         noiser_class=LWREggRoll,
         rank_spec=rank_spec,
         label=label,
+        max_gens=max_gens,
+        return_checkpoint=return_checkpoint,
+        initial_params=initial_params,
     )
 
 # ============================================================

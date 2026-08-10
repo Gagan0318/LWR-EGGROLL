@@ -1,59 +1,10 @@
-# Python
+*.Zone.Identifier
 __pycache__/
 *.pyc
-*.pyo
-.pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Regeneratable outputs
+*.bak
+logs/
 results/
-figures/
-logs/*.log
-
-# Data (regeneratable via download)
 data/
-mnist/
-
-# JAX cache
-hyperscaleescomp/
-
-# W&B local runs (already synced to cloud)
-wandb/
-
-# Environment secrets
-.env
-
-# Pickled objects
-*.pkl
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Editor
-.vscode/
-.idea/
-*.swp
-
-# But keep directory structure via .gitkeep
-!results/.gitkeep
-!figures/.gitkeep
-!logs/.gitkeep
-!logs/findings.md
-
-# Accidental directories
-notebooks/-/
-
-# Windows Zone.Identifier files
-*:Zone.Identifier
-
-# Sweep logs
-sweep_*.log
-
-# Notebook outputs (large)
-*.ipynb_checkpoints/
-
-# src backups
-src/lwr_eggroll_backup/
+notebooks/.ipynb_checkpoints/
+*.log
+src/
