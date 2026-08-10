@@ -37,7 +37,19 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 import sys
 import json
 import time
+import signal
 from pathlib import Path
+
+# ── Interrupt handling ─────────────────────────────────
+_INTERRUPTED = False
+
+def _handle_signal(signum, frame):
+    global _INTERRUPTED
+    _INTERRUPTED = True
+    print("\n⚠ Interrupt received — finishing current gen and saving...", flush=True)
+
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
 
 import jax
 import jax.numpy as jnp
@@ -68,6 +80,7 @@ OPTIMIZER = optax.sgd
 
 MAX_GENS = 500
 SEEDS = [0, 1, 2]
+SAVE_INTERVAL = 1800  # 30 minutes in seconds
 
 # Pilot settings
 PILOT_GENS = 50          # Enough to establish sensitivity ordering
@@ -117,34 +130,105 @@ def init_noiser(params, noiser_class, rank_spec, sigma=SIGMA, lr=LR):
     )
     return frozen_noiser_params, noiser_params
 
-# ── Brax Episode Evaluation ───────────────────────────────────────
-def evaluate_single_rollout(env, policy_fn, key, episode_length=EPISODE_LENGTH):
-    """Run one Brax episode, return total reward."""
-    state = env.reset(key)
+# ── Brax Episode Evaluation (vmapped) ────────────────────────────
+VMAP_CHUNK = 2048  # Lower this (e.g. 256, 512) if you hit GPU OOM
 
-    def scan_step(carry, _):
-        state, total_reward, done = carry
-        obs = state.obs
-        action = policy_fn(obs)
-        action = jnp.clip(action, -1.0, 1.0)
-        next_state = env.step(state, action)
-        reward = next_state.reward * (1.0 - done)
-        done = jnp.logical_or(done, next_state.done)
-        return (next_state, total_reward + reward, done), None
+def _eval_population_chunk(gen_idx, mids, member_keys, env,
+                           NOISER, fnp, cnp, fp, cp, es_tree_key):
+    """Evaluate a chunk of population members in parallel via vmap."""
+    def eval_one(mid, env_key):
+        state = env.reset(env_key)
+        def scan_step(carry, _):
+            s, tr, done = carry
+            iterinfo = (gen_idx, mid)
+            action = jnp.clip(
+                MODEL.forward(NOISER, fnp, cnp, fp, cp, es_tree_key, iterinfo, s.obs),
+                -1.0, 1.0,
+            )
+            ns = env.step(s, action)
+            r = ns.reward * (1.0 - done)
+            done = jnp.logical_or(done, ns.done)
+            return (ns, tr + r, done), None
+        (_, total_reward, _), _ = jax.lax.scan(
+            scan_step,
+            (state, jnp.float32(0.0), jnp.bool_(False)),
+            None, length=EPISODE_LENGTH,
+        )
+        return total_reward
+    return jax.vmap(eval_one)(mids, member_keys)
 
-    init_carry = (state, jnp.float32(0.0), jnp.bool_(False))
-    (_, total_reward, _), _ = jax.lax.scan(
-        scan_step, init_carry, None, length=episode_length
-    )
-    return total_reward
+
+def eval_population(gen, member_keys_arr, env,
+                    NOISER, fnp, cnp, fp, cp, es_tree_key):
+    """Evaluate full population, chunked if needed for GPU memory."""
+    gen_idx = jnp.int32(gen)
+    pop = member_keys_arr.shape[0]
+    mids = jnp.arange(pop, dtype=jnp.int32)
+
+    if pop <= VMAP_CHUNK:
+        return _eval_population_chunk(
+            gen_idx, mids, member_keys_arr, env,
+            NOISER, fnp, cnp, fp, cp, es_tree_key,
+        )
+    # Chunked evaluation for large populations
+    chunks = []
+    for i in range(0, pop, VMAP_CHUNK):
+        chunk = _eval_population_chunk(
+            gen_idx, mids[i:i+VMAP_CHUNK], member_keys_arr[i:i+VMAP_CHUNK],
+            env, NOISER, fnp, cnp, fp, cp, es_tree_key,
+        )
+        chunks.append(chunk)
+    return jnp.concatenate(chunks)
 
 # ── Training Loop ─────────────────────────────────────────────────
+def _save_checkpoint(label, seed, history, best_fitness, gen, wall_seconds, complete=False):
+    """Save a resumable checkpoint."""
+    ckpt = {
+        "method": label, "seed": seed, "gen": gen,
+        "best_fitness": float(best_fitness),
+        "final_mean_fitness": float(history[-1]["mean_fitness"]) if history else 0.0,
+        "wall_seconds": wall_seconds,
+        "generations": len(history),
+        "history": history,
+        "complete": complete,
+    }
+    ckpt_file = RESULTS_DIR / f"{label}_seed{seed}_checkpoint.json"
+    with open(ckpt_file, "w") as f:
+        json.dump(ckpt, f, indent=2)
+    print(f"  💾 Checkpoint saved: gen {gen}, best={best_fitness:.1f}", flush=True)
+    return ckpt
+
+
 def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
           sigma=SIGMA, lr=LR, sigma_decay=SIGMA_DECAY, lr_decay=LR_DECAY):
     """Train using HyperscaleES native API with Brax evaluation.
 
+    Features: 30-min autosave, Ctrl+C handling, NaN fitness guard.
     Returns dict with per-generation history.
     """
+    global _INTERRUPTED
+
+    # Check for completed result
+    result_file = RESULTS_DIR / f"{label}_seed{seed}.json"
+    if result_file.exists():
+        print(f"  [{label} seed={seed}] found completed result, skipping.", flush=True)
+        with open(result_file) as f:
+            return json.load(f)
+
+    # Check for checkpoint to resume from
+    ckpt_file = RESULTS_DIR / f"{label}_seed{seed}_checkpoint.json"
+    start_gen = 0
+    prev_history = []
+    prev_best = -float("inf")
+    if ckpt_file.exists():
+        with open(ckpt_file) as f:
+            ckpt = json.load(f)
+        if not ckpt.get("complete", False):
+            start_gen = ckpt["gen"] + 1
+            prev_history = ckpt.get("history", [])
+            prev_best = ckpt.get("best_fitness", -float("inf"))
+            print(f"  [{label} seed={seed}] resuming from gen {start_gen} (best so far: {prev_best:.1f})", flush=True)
+
     print(f"\n  [{label} seed={seed}] initialising...", flush=True)
     NOISER = noiser_class
     env = make_env()
@@ -162,30 +246,47 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
     )
     current_params = params
 
-    history = []
-    best_fitness = -float("inf")
-    t0 = time.time()
+    # Fast-forward RNG to resume point
+    for _ in range(start_gen):
+        keys = jax.random.split(key, POP_SIZE + 1)
+        key = keys[0]
 
-    for gen in range(max_gens):
+    history = prev_history
+    best_fitness = prev_best
+    t0 = time.time()
+    last_save = time.time()
+
+    for gen in range(start_gen, max_gens):
+        if _INTERRUPTED:
+            print(f"  [{label} seed={seed}] interrupted at gen {gen}", flush=True)
+            wall = time.time() - t0
+            _save_checkpoint(label, seed, history, best_fitness, gen - 1, wall, complete=False)
+            return {
+                "method": label, "seed": seed, "best_fitness": float(best_fitness),
+                "final_mean_fitness": float(history[-1]["mean_fitness"]) if history else 0.0,
+                "generations": len(history), "wall_seconds": wall,
+                "history": history, "interrupted": True,
+            }
+
         t_gen = time.time()
 
         # Generate episode keys for each population member
-        key, *member_keys = jax.random.split(key, POP_SIZE + 1)
+        keys = jax.random.split(key, POP_SIZE + 1)
+        key = keys[0]
+        member_keys_arr = keys[1:]
 
-        gen_fitnesses = []
-        for mid in range(POP_SIZE):
-            def member_policy(obs, mid=mid, gen=gen):
-                iterinfo = (jnp.int32(gen), jnp.int32(mid))
-                output = MODEL.forward(
-                    NOISER, frozen_noiser_params, current_noiser_params,
-                    frozen_params, current_params, es_tree_key, iterinfo, obs
-                )
-                return jnp.clip(output, -1.0, 1.0)
+        gen_fitnesses = eval_population(
+            gen, member_keys_arr, env,
+            NOISER, frozen_noiser_params, current_noiser_params,
+            frozen_params, current_params, es_tree_key,
+        )
 
-            reward = evaluate_single_rollout(env, member_policy, member_keys[mid])
-            gen_fitnesses.append(float(reward))
+        # NaN guard
+        nan_count = int(jnp.sum(jnp.isnan(gen_fitnesses)))
+        if nan_count > 0:
+            print(f"  ⚠ gen {gen}: {nan_count}/{POP_SIZE} NaN fitnesses, replacing with -1000", flush=True)
+            gen_fitnesses = jnp.where(jnp.isnan(gen_fitnesses), -1000.0, gen_fitnesses)
 
-        gen_fitnesses = jnp.array(gen_fitnesses)
         gen_mean = float(jnp.mean(gen_fitnesses))
         gen_best = float(jnp.max(gen_fitnesses))
         gen_var = float(jnp.var(gen_fitnesses))
@@ -224,19 +325,32 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
                   f"  sigma={float(current_noiser_params['sigma']):.4f}"
                   f"  ({gen_elapsed:.1f}s)", flush=True)
 
+        # Periodic save
+        if time.time() - last_save >= SAVE_INTERVAL:
+            wall = time.time() - t0
+            _save_checkpoint(label, seed, history, best_fitness, gen, wall, complete=False)
+            last_save = time.time()
+
     total_time = time.time() - t0
     final_mean = history[-1]["mean_fitness"] if history else 0.0
     print(f"  [{label} seed={seed}] done {total_time:.0f}s, best={best_fitness:.1f}", flush=True)
 
-    return {
+    result = {
         "method": label,
         "seed": seed,
-        "best_fitness": best_fitness,
+        "best_fitness": float(best_fitness),
         "final_mean_fitness": final_mean,
         "generations": len(history),
         "wall_seconds": total_time,
         "history": history,
     }
+
+    # Save final result and mark checkpoint complete
+    with open(result_file, "w") as f:
+        json.dump(result, f, indent=2)
+    _save_checkpoint(label, seed, history, best_fitness, max_gens - 1, total_time, complete=True)
+
+    return result
 
 
 # ── Sensitivity Pilot (Phase 2 + Phase 3) ─────────────────────────
@@ -441,6 +555,10 @@ def main():
     }
 
     for mn, (noiser_class, rank_spec) in METHODS.items():
+        if _INTERRUPTED:
+            print(f"\n⚠ Skipping {mn} — interrupted", flush=True)
+            break
+
         print(f"\n{'─'*60}")
         print(f"METHOD: {mn}")
         print(f"{'─'*60}", flush=True)
@@ -471,7 +589,11 @@ def main():
             with open(result_file, "w") as f:
                 json.dump(r, f, indent=2)
             method_results.append(r)
+            if _INTERRUPTED:
+                break
 
+        if not method_results:
+            continue
         bests = [r["best_fitness"] for r in method_results]
         means = [r["final_mean_fitness"] for r in method_results]
         all_results[mn] = {
