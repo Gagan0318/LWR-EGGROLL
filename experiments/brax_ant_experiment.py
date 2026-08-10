@@ -1,36 +1,37 @@
-"""Brax Ant — Full LWR-EGGROLL experiment (revised for 20-hour GPU budget).
+"""Brax Ant — Full LWR-EGGROLL experiment (final, 20-hour GPU budget).
 
-Matches the EGGROLL paper's Table 19 (brax/ant) hyperparameters exactly.
+Paper Table 19 hyperparameters: activation=pqn, lr=0.1, lr_decay=0.9995,
+layer_size=256, n_layers=3, pop_size=2048, optimizer=sgd, rank=4,
+sigma=0.2, sigma_decay=0.999.
 
-Hyperparameters from paper:
-  activation: pqn, deterministic_policy: false, learning_rate: 0.1,
-  lr_decay: 0.9995, layer_size: 256, n_layers: 3, pop_size: 2048,
-  optimizer: sgd, rank: 4, sigma: 0.2, sigma_decay: 0.999
+Architecture: MLP [27, 256, 256, 256, 8]
+Layer shapes: {(256,27):'input', (256,256):'hidden' (x2 shared), (8,256):'output'}
 
-Architecture: MLP [27, 256, 256, 256, 8] (obs_dim=27, act_dim=8)
-  Layer shapes: {(256,27): 'input', (256,256): 'hidden' (x2, shared), (8,256): 'output'}
+Three-phase sensitivity pilot (Phase 1 + 2 + 3).
+Main: eggroll_r4 (budget 16), eggroll_r1 (budget 4), lwr (pilot-derived).
 
-Three-phase sensitivity pilot:
-  Phase 1 (Elevation, confirmatory): Shared checkpoint + per-layer elevation.
-  Phase 2 (Causal Ablation, primary): Drop each layer to r=1.
-  Phase 3 (Binary Inclusion): r=0 vs r=1 for least sensitive layer.
+CRASH RECOVERY: Every train() checkpoints every 10 min. Every pilot
+sub-result cached individually. Session crash loses <=10 min of compute.
+Delete results/brax_ant/ to force full restart.
 
-Main experiment (rank 4 cap):
-  - eggroll_r4 (uniform r=4, budget=16): baseline
-  - eggroll_r1 (uniform r=1, budget=4): floor reference
-  - lwr (pilot-derived): efficiency claim
-
-CRASH RECOVERY: Every train() call checkpoints every 10 minutes.
-Each pilot sub-result is cached individually. Session crashes lose at most
-~10 minutes of compute. Delete results/brax_ant/ to force full restart.
+IMPORTANT: Changing any config constants (POP_SIZE, pilot gens, seeds, etc.)
+after partial completion requires clearing cache: rm -rf results/brax_ant/cache/
 """
 import os
+# XLA persistent compilation cache — survives session restarts on cluster
+try:
+    os.makedirs("/jupyter/work/jax_cache", exist_ok=True)
+    os.environ.setdefault("XLA_FLAGS",
+        "--xla_gpu_persistent_cache_dir=/jupyter/work/jax_cache")
+except OSError:
+    pass  # Not on cluster — skip XLA cache
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 
-import sys
+import ast
 import json
-import time
 import pickle
+import sys
+import time
 from pathlib import Path
 
 import jax
@@ -60,7 +61,7 @@ ACTIVATION = "pqn"
 OPTIMIZER = optax.sgd
 
 MAX_GENS = 150
-MAX_GENS_FLOOR = 30       # eggroll_r1: just show it's worse
+MAX_GENS_FLOOR = 30
 SEEDS = [0, 1, 2]
 
 PHASE1_CHECKPOINT_GENS = 25
@@ -70,7 +71,7 @@ PHASE3_GENS = 15
 PILOT_SEEDS = [0, 1]
 
 NAN_REPLACEMENT = -1000.0
-CHECKPOINT_INTERVAL_S = 600   # Save training checkpoint every 10 minutes
+CHECKPOINT_INTERVAL_S = 600
 
 RESULTS_DIR = Path("results/brax_ant")
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -85,7 +86,7 @@ LAYER_SHAPES = {
 
 MODEL = hs.models.common.MLP
 
-# ── Environment Setup ──────────────────────────────────────────────
+# ── Environment ────────────────────────────────────────────────────
 def make_env():
     return envs.get_environment(ENV_NAME)
 
@@ -95,29 +96,43 @@ def get_dims():
 
 OBS_DIM, ACT_DIM = get_dims()
 
-# ── Checkpoint Helpers ─────────────────────────────────────────────
+# ── Checkpoint I/O (numpy-safe for cross-session pickle) ──────────
+def _to_numpy_leaf(x):
+    """Convert JAX arrays to numpy for pickle. Leave others unchanged."""
+    if hasattr(x, 'dtype') and hasattr(x, 'shape') and not isinstance(x, np.ndarray):
+        try:
+            return np.asarray(x)
+        except Exception:
+            return x
+    return x
+
+def _to_jax_leaf(x):
+    """Convert numpy arrays back to JAX on load."""
+    if isinstance(x, np.ndarray):
+        return jnp.asarray(x)
+    return x
+
 def save_pickle(filepath, data):
-    """Save arbitrary data (including JAX arrays) via pickle."""
     filepath = Path(filepath)
+    np_data = jax.tree_util.tree_map(_to_numpy_leaf, data)
     tmp = filepath.with_suffix('.tmp')
     with open(tmp, 'wb') as f:
-        pickle.dump(data, f)
-    tmp.rename(filepath)  # Atomic rename — no corrupt files on crash
+        pickle.dump(np_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+    tmp.rename(filepath)
 
 def load_pickle(filepath):
-    """Load pickle file, return None if missing/corrupt."""
     filepath = Path(filepath)
     if not filepath.exists():
         return None
     try:
         with open(filepath, 'rb') as f:
-            return pickle.load(f)
+            np_data = pickle.load(f)
+        return jax.tree_util.tree_map(_to_jax_leaf, np_data)
     except Exception as e:
         print(f"  WARNING: corrupt checkpoint {filepath}, ignoring: {e}", flush=True)
         return None
 
 def save_json(filepath, data):
-    """Save JSON with atomic write."""
     filepath = Path(filepath)
     tmp = filepath.with_suffix('.tmp')
     with open(tmp, 'w') as f:
@@ -125,7 +140,6 @@ def save_json(filepath, data):
     tmp.rename(filepath)
 
 def load_json(filepath):
-    """Load JSON, return None if missing."""
     filepath = Path(filepath)
     if not filepath.exists():
         return None
@@ -137,48 +151,29 @@ def load_json(filepath):
 
 # ── Model + Noiser Init ───────────────────────────────────────────
 def init_model(key):
-    frozen_params, params, scan_map, es_map = MODEL.rand_init(
+    fp, p, sm, em = MODEL.rand_init(
         key, in_dim=OBS_DIM, out_dim=ACT_DIM,
         hidden_dims=[LAYER_SIZE] * N_LAYERS,
-        use_bias=True, activation=ACTIVATION, dtype="float32",
-    )
-    return frozen_params, params, scan_map, es_map
+        use_bias=True, activation=ACTIVATION, dtype="float32")
+    return fp, p, sm, em
 
 def init_noiser(params, noiser_class, rank_spec, sigma=SIGMA, lr=LR):
-    frozen_noiser_params, noiser_params = noiser_class.init_noiser(
-        params, sigma, lr, solver=OPTIMIZER, solver_kwargs={}, rank=rank_spec,
-    )
-    return frozen_noiser_params, noiser_params
+    fnp, np_ = noiser_class.init_noiser(
+        params, sigma, lr, solver=OPTIMIZER, solver_kwargs={}, rank=rank_spec)
+    return fnp, np_
 
-# ── Brax Episode Evaluation ───────────────────────────────────────
-def evaluate_single_rollout(env, policy_fn, key, episode_length=EPISODE_LENGTH):
-    state = env.reset(key)
-    def scan_step(carry, _):
-        state, total_reward, done = carry
-        action = jnp.clip(policy_fn(state.obs), -1.0, 1.0)
-        ns = env.step(state, action)
-        reward = ns.reward * (1.0 - done)
-        done = jnp.logical_or(done, ns.done)
-        return (ns, total_reward + reward, done), None
-    init_carry = (state, jnp.float32(0.0), jnp.bool_(False))
-    (_, total_reward, _), _ = jax.lax.scan(scan_step, init_carry, None, length=episode_length)
-    return total_reward
-
-# ── Training Loop (with checkpointing) ────────────────────────────
+# ── Training Loop ─────────────────────────────────────────────────
 def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
           sigma=SIGMA, lr=LR, sigma_decay=SIGMA_DECAY, lr_decay=LR_DECAY,
           initial_state=None, return_checkpoint_at=None):
-    """Train with periodic checkpointing for crash recovery.
+    """Train with 10-minute crash-recovery checkpoints.
 
-    Checkpoints every CHECKPOINT_INTERVAL_S seconds. On restart,
-    automatically resumes from the last checkpoint if one exists.
-
-    If return_checkpoint_at is set, returns (result, checkpoint_state).
+    If return_checkpoint_at is set, returns (result_dict, checkpoint_state).
+    Otherwise returns result_dict.
     """
     NOISER = noiser_class
     env = make_env()
 
-    # Check for existing training checkpoint (crash recovery)
     ckpt_file = CACHE_DIR / f"train_{label}_seed{seed}.pkl"
     resumed_gen = 0
     history = []
@@ -186,7 +181,6 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
 
     existing_ckpt = load_pickle(ckpt_file)
     if existing_ckpt is not None and initial_state is None:
-        # Resume from training checkpoint
         resumed_gen = existing_ckpt['gen'] + 1
         history = existing_ckpt['history']
         best_fitness = existing_ckpt['best_fitness']
@@ -208,22 +202,67 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
             es_map = initial_state['es_map']
             es_tree_key = initial_state['es_tree_key']
             frozen_noiser_params, current_noiser_params = init_noiser(
-                current_params, noiser_class, rank_spec, sigma=sigma, lr=lr
-            )
+                current_params, noiser_class, rank_spec, sigma=sigma, lr=lr)
         else:
-            key = jax.random.key(seed)
+            key = jax.random.PRNGKey(seed)
             key, model_key, es_key = jax.random.split(key, 3)
             frozen_params, current_params, scan_map, es_map = init_model(model_key)
-            es_tree_key = hs.models.common.simple_es_tree_key(current_params, es_key, scan_map)
+            es_tree_key = hs.models.common.simple_es_tree_key(
+                current_params, es_key, scan_map)
             frozen_noiser_params, current_noiser_params = init_noiser(
-                current_params, noiser_class, rank_spec, sigma=sigma, lr=lr
-            )
-        episode_key = jax.random.key(seed + 10000)
-        # Fast-forward episode key if resuming would apply
+                current_params, noiser_class, rank_spec, sigma=sigma, lr=lr)
+        episode_key = jax.random.PRNGKey(seed + 10000)
         print(f"\n  [{label} seed={seed}] initialising...", flush=True)
 
-    n_params = sum(x.size for x in jax.tree.leaves(current_params))
+    n_params = sum(x.size for x in jax.tree_util.tree_leaves(current_params))
     print(f"  [{label} seed={seed}] params: {n_params:,}", flush=True)
+
+    # Two evaluation strategies: JIT (fast) and closure fallback (slow but safe)
+    use_jit = globals().get('USE_JIT_EVAL', True)
+
+    if use_jit:
+        # JIT: gen_i and mid_i are traced abstract ints → ONE kernel compiled.
+        @jax.jit
+        def _eval_member(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
+            iterinfo = (gen_i, mid_i)
+            def policy(obs):
+                return jnp.clip(
+                    MODEL.forward(NOISER, fnp, cnp, fp, cp, estk,
+                                  iterinfo, obs), -1.0, 1.0)
+            state = env.reset(ep_key)
+            def scan_step(carry, _):
+                st, total_reward, done = carry
+                action = policy(st.obs)
+                ns = env.step(st, action)
+                reward = ns.reward * (1.0 - done)
+                done = jnp.logical_or(done, ns.done)
+                return (ns, total_reward + reward, done), None
+            (_, total_reward, _), _ = jax.lax.scan(
+                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
+                None, length=EPISODE_LENGTH)
+            return total_reward
+
+    def _eval_member_closure(gen, mid, ep_key):
+        """Fallback: closure-based, one JIT trace per (gen, mid) combo."""
+        iterinfo = (jnp.int32(gen), jnp.int32(mid))
+        def policy(obs):
+            return jnp.clip(
+                MODEL.forward(NOISER, frozen_noiser_params,
+                              current_noiser_params, frozen_params,
+                              current_params, es_tree_key, iterinfo, obs),
+                -1.0, 1.0)
+        state = env.reset(ep_key)
+        def scan_step(carry, _):
+            st, total_reward, done = carry
+            action = policy(st.obs)
+            ns = env.step(st, action)
+            reward = ns.reward * (1.0 - done)
+            done = jnp.logical_or(done, ns.done)
+            return (ns, total_reward + reward, done), None
+        (_, total_reward, _), _ = jax.lax.scan(
+            scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
+            None, length=EPISODE_LENGTH)
+        return total_reward
 
     checkpoint_state_for_return = None
     t0 = time.time()
@@ -232,21 +271,25 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
     for gen in range(resumed_gen, max_gens):
         t_gen = time.time()
 
-        episode_key, *member_keys = jax.random.split(episode_key, POP_SIZE + 1)
+        all_keys = jax.random.split(episode_key, POP_SIZE + 1)
+        episode_key = all_keys[0]
+        member_keys = all_keys[1:]
 
-        gen_fitnesses = []
-        for mid in range(POP_SIZE):
-            def member_policy(obs, mid=mid, gen=gen):
-                iterinfo = (jnp.int32(gen), jnp.int32(mid))
-                output = MODEL.forward(
-                    NOISER, frozen_noiser_params, current_noiser_params,
-                    frozen_params, current_params, es_tree_key, iterinfo, obs
-                )
-                return jnp.clip(output, -1.0, 1.0)
-            reward = evaluate_single_rollout(env, member_policy, member_keys[mid])
-            gen_fitnesses.append(float(reward))
+        rewards = []
+        if use_jit:
+            gen_i = jnp.int32(gen)
+            for mid in range(POP_SIZE):
+                r = _eval_member(
+                    gen_i, jnp.int32(mid), member_keys[mid],
+                    frozen_noiser_params, current_noiser_params,
+                    frozen_params, current_params, es_tree_key)
+                rewards.append(r)
+        else:
+            for mid in range(POP_SIZE):
+                r = _eval_member_closure(gen, mid, member_keys[mid])
+                rewards.append(float(r))
 
-        gen_fitnesses_arr = jnp.array(gen_fitnesses)
+        gen_fitnesses_arr = jnp.array(rewards) if not use_jit else jnp.stack(rewards)
 
         # NaN handling
         nan_mask = jnp.isnan(gen_fitnesses_arr)
@@ -269,7 +312,8 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
         })
 
         # ES update
-        iterinfo = (jnp.full(POP_SIZE, gen, dtype=jnp.int32), jnp.arange(POP_SIZE))
+        iterinfo = (jnp.full(POP_SIZE, gen, dtype=jnp.int32),
+                    jnp.arange(POP_SIZE))
         converted = NOISER.convert_fitnesses(
             frozen_noiser_params, current_noiser_params, gen_fitnesses_arr)
         current_noiser_params, current_params = NOISER.do_updates(
@@ -278,11 +322,11 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
 
         # Decay
         if sigma_decay < 1.0:
-            current_noiser_params['sigma'] *= sigma_decay
+            current_noiser_params['sigma'] = current_noiser_params['sigma'] * sigma_decay
         if lr_decay < 1.0 and 'lr' in current_noiser_params:
-            current_noiser_params['lr'] *= lr_decay
+            current_noiser_params['lr'] = current_noiser_params['lr'] * lr_decay
 
-        # Return checkpoint if requested (for Phase 1)
+        # Return checkpoint (Phase 1)
         if return_checkpoint_at is not None and gen == return_checkpoint_at:
             checkpoint_state_for_return = {
                 'frozen_params': frozen_params, 'params': current_params,
@@ -291,9 +335,9 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
                 'frozen_noiser_params': frozen_noiser_params,
                 'noiser_params': current_noiser_params,
             }
-            print(f"  [{label} seed={seed}] return-checkpoint saved at gen {gen}", flush=True)
+            print(f"  [{label} seed={seed}] return-checkpoint at gen {gen}", flush=True)
 
-        # Periodic crash-recovery checkpoint
+        # Crash-recovery checkpoint every 10 min
         now = time.time()
         if now - last_ckpt_time >= CHECKPOINT_INTERVAL_S:
             save_pickle(ckpt_file, {
@@ -306,7 +350,7 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
                 'episode_key': episode_key,
             })
             last_ckpt_time = now
-            print(f"  [{label} seed={seed}] checkpoint saved at gen {gen} "
+            print(f"  [{label} seed={seed}] checkpoint at gen {gen} "
                   f"({now - t0:.0f}s elapsed)", flush=True)
 
         gen_elapsed = time.time() - t_gen
@@ -317,9 +361,10 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
 
     total_time = time.time() - t0
     final_mean = history[-1]["mean_fitness"] if history else 0.0
-    print(f"  [{label} seed={seed}] done {total_time:.0f}s, best={best_fitness:.1f}", flush=True)
+    print(f"  [{label} seed={seed}] done {total_time:.0f}s, best={best_fitness:.1f}",
+          flush=True)
 
-    # Clean up training checkpoint — run complete
+    # Clean up training checkpoint
     if ckpt_file.exists():
         ckpt_file.unlink()
 
@@ -328,58 +373,55 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
         "final_mean_fitness": final_mean, "generations": len(history),
         "wall_seconds": total_time, "history": history,
     }
-
     if return_checkpoint_at is not None:
         return result, checkpoint_state_for_return
     return result
 
 
-# ── Phase 1: Sensitivity Elevation ────────────────────────────────
+# ── Phase 1: Elevation ────────────────────────────────────────────
 def run_phase1():
     print(f"\n{'='*60}")
     print("SENSITIVITY PILOT — Phase 1 (Elevation / Magnitude)")
     print(f"{'='*60}")
-    print(f"  Checkpoint gens: {PHASE1_CHECKPOINT_GENS}")
-    print(f"  Elevation gens: {PHASE1_ELEVATION_GENS}")
-    print(f"  Seeds: {PILOT_SEEDS}")
+    print(f"  Checkpoint gens: {PHASE1_CHECKPOINT_GENS}, "
+          f"Elevation gens: {PHASE1_ELEVATION_GENS}, Seeds: {PILOT_SEEDS}")
 
     unique_shapes = list(LAYER_SHAPES.items())
     phase1_results = {}
 
     for seed in PILOT_SEEDS:
-        # Check cache for checkpoint training
         ckpt_cache = CACHE_DIR / f"p1_checkpoint_seed{seed}.json"
+        ckpt_state_file = CACHE_DIR / f"p1_checkpoint_state_seed{seed}.pkl"
         cached = load_json(ckpt_cache)
-        if cached is not None:
+
+        if cached is not None and load_pickle(ckpt_state_file) is not None:
             checkpoint_fitness = cached["checkpoint_fitness"]
-            checkpoint_state_file = CACHE_DIR / f"p1_checkpoint_state_seed{seed}.pkl"
-            checkpoint_state = load_pickle(checkpoint_state_file)
-            print(f"\n  Phase 1 — Checkpoint seed={seed} loaded from cache "
+            checkpoint_state = load_pickle(ckpt_state_file)
+            print(f"\n  Phase 1 — Checkpoint seed={seed} from cache "
                   f"(fitness={checkpoint_fitness:.1f})", flush=True)
         else:
-            print(f"\n  Phase 1 — Training shared checkpoint (seed={seed})...", flush=True)
+            print(f"\n  Phase 1 — Training shared checkpoint (seed={seed})...",
+                  flush=True)
             checkpoint_result, checkpoint_state = train(
                 seed, EggRoll, RANK, f"phase1_checkpoint",
                 max_gens=PHASE1_CHECKPOINT_GENS,
-                return_checkpoint_at=PHASE1_CHECKPOINT_GENS - 1,
-            )
+                return_checkpoint_at=PHASE1_CHECKPOINT_GENS - 1)
             checkpoint_fitness = checkpoint_result["final_mean_fitness"]
-            # Cache checkpoint
             save_json(ckpt_cache, {"checkpoint_fitness": checkpoint_fitness})
-            save_pickle(CACHE_DIR / f"p1_checkpoint_state_seed{seed}.pkl", checkpoint_state)
-            print(f"  Checkpoint fitness (seed={seed}): {checkpoint_fitness:.1f}", flush=True)
+            save_pickle(ckpt_state_file, checkpoint_state)
+            print(f"  Checkpoint fitness (seed={seed}): {checkpoint_fitness:.1f}",
+                  flush=True)
 
         if checkpoint_state is None:
             print(f"  ERROR: checkpoint not captured for seed={seed}!", flush=True)
             continue
 
-        # Elevate each layer
         for layer_name, layer_shape in unique_shapes:
             elev_cache = CACHE_DIR / f"p1_elevate_{layer_name}_seed{seed}.json"
             cached_elev = load_json(elev_cache)
             if cached_elev is not None:
                 phase1_results[f"{layer_name}_seed{seed}"] = cached_elev
-                print(f"  Phase 1 — {layer_name} seed={seed} loaded from cache "
+                print(f"  Phase 1 — {layer_name} seed={seed} from cache "
                       f"(|delta|={cached_elev['abs_delta']:.1f})", flush=True)
                 continue
 
@@ -387,32 +429,28 @@ def run_phase1():
                   f"(seed={seed}):", flush=True)
             elevated_spec = {s: RANK for s in LAYER_SHAPES.values()}
             elevated_spec[layer_shape] = 8
-
             elevated_result = train(
                 seed, LWREggRoll, elevated_spec,
                 f"phase1_elevate_{layer_name}",
                 max_gens=PHASE1_ELEVATION_GENS,
-                initial_state=checkpoint_state,
-            )
+                initial_state=checkpoint_state)
             elevated_fitness = elevated_result["final_mean_fitness"]
             delta = abs(elevated_fitness - checkpoint_fitness)
-
             entry = {
                 "layer": layer_name, "seed": seed,
                 "checkpoint_fitness": checkpoint_fitness,
-                "elevated_fitness": elevated_fitness,
-                "abs_delta": delta,
+                "elevated_fitness": elevated_fitness, "abs_delta": delta,
             }
             phase1_results[f"{layer_name}_seed{seed}"] = entry
             save_json(elev_cache, entry)
             print(f"  {layer_name} (seed={seed}): elevated={elevated_fitness:.1f}, "
                   f"|delta|={delta:.1f}", flush=True)
 
-    # Aggregate
     phase1_summary = {}
     for layer_name, _ in unique_shapes:
         deltas = [phase1_results[f"{layer_name}_seed{s}"]["abs_delta"]
-                  for s in PILOT_SEEDS if f"{layer_name}_seed{s}" in phase1_results]
+                  for s in PILOT_SEEDS
+                  if f"{layer_name}_seed{s}" in phase1_results]
         phase1_summary[layer_name] = {
             "mean_abs_delta": float(np.mean(deltas)),
             "per_seed_deltas": deltas,
@@ -422,19 +460,13 @@ def run_phase1():
                              key=lambda n: phase1_summary[n]["mean_abs_delta"],
                              reverse=True)
     phase1_ordering_str = " > ".join(phase1_ordering)
+    save_json(CACHE_DIR / "phase1_complete.json",
+              {"ordering": phase1_ordering_str, "summary": phase1_summary})
 
-    # Save Phase 1 complete
-    save_json(CACHE_DIR / "phase1_complete.json", {
-        "ordering": phase1_ordering_str,
-        "summary": phase1_summary,
-    })
-
-    print(f"\n  Phase 1 magnitude ordering: {phase1_ordering_str}")
+    print(f"\n  Phase 1 ordering: {phase1_ordering_str}")
     for name in phase1_ordering:
         s = phase1_summary[name]
-        print(f"    {name}: mean |delta| = {s['mean_abs_delta']:.1f} "
-              f"(per-seed: {s['per_seed_deltas']})")
-
+        print(f"    {name}: mean |delta| = {s['mean_abs_delta']:.1f}")
     return phase1_ordering_str, phase1_summary
 
 
@@ -443,31 +475,27 @@ def run_phase2():
     print(f"\n{'='*60}")
     print("SENSITIVITY PILOT — Phase 2 (Causal Ablation)")
     print(f"{'='*60}")
-    print(f"  Pilot gens: {PHASE2_GENS}, Seeds: {PILOT_SEEDS}")
-    print(f"  Baseline rank: {RANK}, Ablation rank: 1")
+    print(f"  Gens: {PHASE2_GENS}, Seeds: {PILOT_SEEDS}, "
+          f"Baseline: r={RANK}, Ablation: r=1")
 
     unique_shapes = list(LAYER_SHAPES.items())
 
-    # Baseline
     baseline_fitnesses = []
     for seed in PILOT_SEEDS:
         bl_cache = CACHE_DIR / f"p2_baseline_seed{seed}.json"
         cached = load_json(bl_cache)
         if cached is not None:
             baseline_fitnesses.append(cached["final_mean_fitness"])
-            print(f"  Phase 2 — Baseline seed={seed} loaded from cache "
-                  f"(fitness={cached['final_mean_fitness']:.1f})", flush=True)
+            print(f"  Baseline seed={seed} from cache "
+                  f"({cached['final_mean_fitness']:.1f})", flush=True)
         else:
-            print(f"\n  Phase 2 — Baseline (uniform r={RANK}, seed={seed}):", flush=True)
             r = train(seed, EggRoll, RANK, f"pilot_baseline_r{RANK}",
                       max_gens=PHASE2_GENS)
             baseline_fitnesses.append(r["final_mean_fitness"])
             save_json(bl_cache, {"final_mean_fitness": r["final_mean_fitness"]})
+    baseline_mean = float(np.mean(baseline_fitnesses))
+    print(f"  Baseline mean: {baseline_mean:.1f}", flush=True)
 
-    baseline_mean = np.mean(baseline_fitnesses)
-    print(f"  Baseline mean fitness: {baseline_mean:.1f}", flush=True)
-
-    # Ablate each layer
     degradations = {}
     for layer_name, layer_shape in unique_shapes:
         abl_fitnesses = []
@@ -476,39 +504,35 @@ def run_phase2():
             cached = load_json(abl_cache)
             if cached is not None:
                 abl_fitnesses.append(cached["final_mean_fitness"])
-                print(f"  Phase 2 — Ablate {layer_name} seed={seed} loaded from cache",
-                      flush=True)
+                print(f"  Ablate {layer_name} seed={seed} from cache", flush=True)
             else:
-                print(f"\n  Phase 2 — Ablating {layer_name} {layer_shape} to r=1 "
-                      f"(seed={seed}):", flush=True)
                 ablated_spec = {s: RANK for s in LAYER_SHAPES.values()}
                 ablated_spec[layer_shape] = 1
                 r = train(seed, LWREggRoll, ablated_spec,
                           f"pilot_ablate_{layer_name}", max_gens=PHASE2_GENS)
                 abl_fitnesses.append(r["final_mean_fitness"])
-                save_json(abl_cache, {"final_mean_fitness": r["final_mean_fitness"]})
-
-        ablated_mean = np.mean(abl_fitnesses)
+                save_json(abl_cache,
+                          {"final_mean_fitness": r["final_mean_fitness"]})
+        ablated_mean = float(np.mean(abl_fitnesses))
         degradation = baseline_mean - ablated_mean
         degradations[layer_name] = {
             "shape": layer_shape,
             "mean_fitness": ablated_mean,
             "degradation": degradation,
         }
-        print(f"  {layer_name}: mean={ablated_mean:.1f}, degradation={degradation:.1f}",
-              flush=True)
+        print(f"  {layer_name}: mean={ablated_mean:.1f}, "
+              f"degradation={degradation:.1f}", flush=True)
 
     ordering = sorted(degradations.keys(),
                       key=lambda n: degradations[n]["degradation"], reverse=True)
     ordering_str = " > ".join(ordering)
-
     save_json(CACHE_DIR / "phase2_complete.json", {
         "baseline_mean": baseline_mean,
-        "degradations": {k: {**v, "shape": str(v["shape"])} for k, v in degradations.items()},
+        "degradations": {k: {**v, "shape": str(v["shape"])}
+                         for k, v in degradations.items()},
         "ordering": ordering_str,
     })
-
-    print(f"\n  Phase 2 sensitivity ordering: {ordering_str}")
+    print(f"\n  Phase 2 ordering: {ordering_str}")
     return ordering, degradations, baseline_mean
 
 
@@ -516,24 +540,20 @@ def run_phase2():
 def run_phase3(ordering, degradations):
     least_sensitive = ordering[-1]
     ls_shape = degradations[least_sensitive]["shape"]
-
     print(f"\n{'='*60}")
     print(f"SENSITIVITY PILOT — Phase 3 (Binary Inclusion)")
     print(f"{'='*60}")
-    print(f"  Layer: {least_sensitive} {ls_shape}")
-    print(f"  Comparing r=0 vs r=1")
+    print(f"  Layer: {least_sensitive} {ls_shape}, r=0 vs r=1")
 
     r1_mean = degradations[least_sensitive]["mean_fitness"]
 
-    # r=0
     frozen_fitnesses = []
     for seed in PILOT_SEEDS:
         p3_cache = CACHE_DIR / f"p3_freeze_{least_sensitive}_seed{seed}.json"
         cached = load_json(p3_cache)
         if cached is not None:
             frozen_fitnesses.append(cached["final_mean_fitness"])
-            print(f"  Phase 3 — Freeze {least_sensitive} seed={seed} loaded from cache",
-                  flush=True)
+            print(f"  Freeze {least_sensitive} seed={seed} from cache", flush=True)
         else:
             frozen_spec = {s: RANK for s in LAYER_SHAPES.values()}
             frozen_spec[ls_shape] = 0
@@ -542,63 +562,56 @@ def run_phase3(ordering, degradations):
             frozen_fitnesses.append(r["final_mean_fitness"])
             save_json(p3_cache, {"final_mean_fitness": r["final_mean_fitness"]})
 
-    r0_mean = np.mean(frozen_fitnesses)
+    r0_mean = float(np.mean(frozen_fitnesses))
     freeze_justified = r0_mean >= r1_mean - 5.0
     phase3_decision = 0 if freeze_justified else 1
 
     save_json(CACHE_DIR / "phase3_complete.json", {
         "least_sensitive": least_sensitive,
         "r1_mean": r1_mean, "r0_mean": r0_mean,
-        "freeze_justified": freeze_justified,
-        "decision": phase3_decision,
+        "freeze_justified": freeze_justified, "decision": phase3_decision,
     })
-
-    print(f"  {least_sensitive} at r=1: {r1_mean:.1f}, at r=0: {r0_mean:.1f}")
-    print(f"  Freeze justified: {freeze_justified} -> assign rank {phase3_decision}")
-
+    print(f"  r=1: {r1_mean:.1f}, r=0: {r0_mean:.1f} -> rank {phase3_decision}")
     return least_sensitive, phase3_decision, r0_mean, r1_mean
 
 
-# ── Full Sensitivity Pilot ─────────────────────────────────────────
+# ── Full Pilot ─────────────────────────────────────────────────────
 def run_sensitivity_pilot():
     # Phase 1
-    p1_cache = load_json(CACHE_DIR / "phase1_complete.json")
-    if p1_cache is not None:
-        phase1_ordering_str = p1_cache["ordering"]
-        phase1_summary = p1_cache["summary"]
-        print(f"\n  Phase 1 loaded from cache: {phase1_ordering_str}")
+    p1c = load_json(CACHE_DIR / "phase1_complete.json")
+    if p1c is not None:
+        p1_ord_str, p1_summary = p1c["ordering"], p1c["summary"]
+        print(f"\n  Phase 1 from cache: {p1_ord_str}")
     else:
-        phase1_ordering_str, phase1_summary = run_phase1()
+        p1_ord_str, p1_summary = run_phase1()
 
     # Phase 2
-    p2_cache = load_json(CACHE_DIR / "phase2_complete.json")
-    if p2_cache is not None:
-        ordering_str = p2_cache["ordering"]
+    p2c = load_json(CACHE_DIR / "phase2_complete.json")
+    if p2c is not None:
+        ordering_str = p2c["ordering"]
         ordering = ordering_str.split(" > ")
-        baseline_mean = p2_cache["baseline_mean"]
+        baseline_mean = p2c["baseline_mean"]
         degradations = {}
-        for k, v in p2_cache["degradations"].items():
-            # Reconstruct shape tuple from string
-            shape_str = v["shape"]
-            shape = tuple(int(x.strip()) for x in shape_str.strip("()").split(","))
+        for k, v in p2c["degradations"].items():
+            shape = ast.literal_eval(v["shape"])
             degradations[k] = {**v, "shape": shape}
-        print(f"\n  Phase 2 loaded from cache: {ordering_str}")
+        print(f"\n  Phase 2 from cache: {ordering_str}")
     else:
         ordering, degradations, baseline_mean = run_phase2()
         ordering_str = " > ".join(ordering)
 
     # Phase 3
-    p3_cache = load_json(CACHE_DIR / "phase3_complete.json")
-    if p3_cache is not None:
-        least_sensitive = p3_cache["least_sensitive"]
-        phase3_decision = p3_cache["decision"]
-        r0_mean = p3_cache["r0_mean"]
-        r1_mean = p3_cache["r1_mean"]
-        print(f"\n  Phase 3 loaded from cache: {least_sensitive} -> rank {phase3_decision}")
+    p3c = load_json(CACHE_DIR / "phase3_complete.json")
+    if p3c is not None:
+        least_sensitive = p3c["least_sensitive"]
+        phase3_decision = p3c["decision"]
+        r0_mean, r1_mean = p3c["r0_mean"], p3c["r1_mean"]
+        print(f"\n  Phase 3 from cache: {least_sensitive} -> rank {phase3_decision}")
     else:
-        least_sensitive, phase3_decision, r0_mean, r1_mean = run_phase3(ordering, degradations)
+        least_sensitive, phase3_decision, r0_mean, r1_mean = \
+            run_phase3(ordering, degradations)
 
-    # Build allocation
+    # Build allocation (rank 4 cap)
     rank_tiers = [4, 2]
     allocation = {}
     alloc_named = {}
@@ -610,14 +623,17 @@ def run_sensitivity_pilot():
             allocation[shape] = rank_tiers[min(i, len(rank_tiers) - 1)]
         alloc_named[layer_name] = allocation[shape]
 
-    actual_budget = alloc_named["input"] + 2 * alloc_named["hidden"] + alloc_named["output"]
-    alloc_label = "_".join(str(alloc_named[n]) for n in ["input", "hidden", "output"])
+    actual_budget = (alloc_named["input"] + 2 * alloc_named["hidden"]
+                     + alloc_named["output"])
+    alloc_label = "_".join(
+        str(alloc_named[n]) for n in ["input", "hidden", "output"])
 
-    pilot_results = {
-        "phase1": {"ordering": phase1_ordering_str, "summary": phase1_summary},
+    save_json(RESULTS_DIR / "pilot_results.json", {
+        "phase1": {"ordering": p1_ord_str, "summary": p1_summary},
         "phase2": {
             "baseline_mean": baseline_mean,
-            "degradations": {k: {**v, "shape": str(v["shape"])} for k, v in degradations.items()},
+            "degradations": {k: {**v, "shape": str(v["shape"])}
+                             for k, v in degradations.items()},
             "ordering": ordering_str,
         },
         "phase3": {
@@ -628,37 +644,113 @@ def run_sensitivity_pilot():
         "allocation": alloc_named, "allocation_label": alloc_label,
         "rank_budget": actual_budget,
         "rank_spec": {str(k): v for k, v in allocation.items()},
-    }
-    save_json(RESULTS_DIR / "pilot_results.json", pilot_results)
+    })
 
     print(f"\n{'='*60}")
     print(f"  PILOT SUMMARY")
-    print(f"  Phase 1 ordering (magnitude): {phase1_ordering_str}")
-    print(f"  Phase 2 ordering (direction): {ordering_str}")
+    print(f"  Phase 1 (magnitude): {p1_ord_str}")
+    print(f"  Phase 2 (direction): {ordering_str}")
     print(f"  Phase 3: {least_sensitive} -> rank {phase3_decision}")
     print(f"  Allocation: {alloc_named} (label: {alloc_label})")
-    print(f"  Rank budget: {actual_budget} (vs uniform r=4 budget: {4*4}=16)")
+    print(f"  Budget: {actual_budget} (vs uniform r=4: 16)")
     print(f"{'='*60}\n", flush=True)
-
     return allocation, alloc_named, ordering_str, alloc_label
 
 
-# ── Main Experiment ───────────────────────────────────────────────
+# ── Main ──────────────────────────────────────────────────────────
 def main():
-    actual_params = LAYER_SHAPES["input"][0] * LAYER_SHAPES["input"][1] + \
-                    2 * LAYER_SHAPES["hidden"][0] * LAYER_SHAPES["hidden"][1] + \
-                    LAYER_SHAPES["output"][0] * LAYER_SHAPES["output"][1]
+    actual_params = (LAYER_SHAPES["input"][0] * LAYER_SHAPES["input"][1]
+                     + 2 * LAYER_SHAPES["hidden"][0] * LAYER_SHAPES["hidden"][1]
+                     + LAYER_SHAPES["output"][0] * LAYER_SHAPES["output"][1])
     print("=" * 60)
-    print(f"BRAX ANT — FULL LWR-EGGROLL EXPERIMENT")
-    print(f"Architecture: [{OBS_DIM}, {LAYER_SIZE}, {LAYER_SIZE}, {LAYER_SIZE}, {ACT_DIM}]"
-          f"  ({actual_params:,} weight params)")
+    print("BRAX ANT — FULL LWR-EGGROLL EXPERIMENT")
+    arch = [OBS_DIM] + [LAYER_SIZE] * N_LAYERS + [ACT_DIM]
+    print(f"Architecture: {arch}  ({actual_params:,} weight params)")
     print(f"POP={POP_SIZE}, SIGMA={SIGMA}, LR={LR}, MAX_GENS={MAX_GENS}")
     print(f"SIGMA_DECAY={SIGMA_DECAY}, LR_DECAY={LR_DECAY}")
-    print(f"Seeds: {SEEDS}")
-    print(f"Checkpoint interval: {CHECKPOINT_INTERVAL_S}s")
+    print(f"Seeds: {SEEDS}, Checkpoint: {CHECKPOINT_INTERVAL_S}s")
     print("=" * 60, flush=True)
 
-    # Step 1: Sensitivity Pilot
+    # ── Pre-flight: verify JIT evaluation works ──
+    print("\nPre-flight: testing JIT evaluation (should complete in 1-3 min)...",
+          flush=True)
+    print("  (If stuck >5 min, press Ctrl+C to use fallback mode)", flush=True)
+    JIT_EVAL_WORKS = False
+    try:
+        _pf_env = make_env()
+        _pf_key = jax.random.PRNGKey(9999)
+        _pf_key, _pf_mk, _pf_ek = jax.random.split(_pf_key, 3)
+        _pf_fp, _pf_cp, _pf_sm, _pf_em = init_model(_pf_mk)
+        _pf_estk = hs.models.common.simple_es_tree_key(_pf_cp, _pf_ek, _pf_sm)
+        _pf_keys = jax.random.split(jax.random.PRNGKey(42), 4)
+
+        # Test 1: EggRoll (uniform rank)
+        _pf_fnp, _pf_cnp = init_noiser(_pf_cp, EggRoll, RANK)
+        @jax.jit
+        def _pf_eval_egg(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
+            iterinfo = (gen_i, mid_i)
+            def policy(obs):
+                return jnp.clip(MODEL.forward(
+                    EggRoll, fnp, cnp, fp, cp, estk, iterinfo, obs), -1.0, 1.0)
+            state = _pf_env.reset(ep_key)
+            def scan_step(carry, _):
+                st, tr, done = carry
+                ns = _pf_env.step(st, policy(st.obs))
+                return (ns, tr + ns.reward * (1.0 - done),
+                        jnp.logical_or(done, ns.done)), None
+            (_, tr, _), _ = jax.lax.scan(
+                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
+                None, length=10)
+            return tr
+
+        t_pf = time.time()
+        _r0 = float(_pf_eval_egg(jnp.int32(0), jnp.int32(0), _pf_keys[0],
+                                  _pf_fnp, _pf_cnp, _pf_fp, _pf_cp, _pf_estk))
+        _r1 = float(_pf_eval_egg(jnp.int32(0), jnp.int32(1), _pf_keys[1],
+                                  _pf_fnp, _pf_cnp, _pf_fp, _pf_cp, _pf_estk))
+        print(f"  EggRoll JIT OK: m0={_r0:.2f}, m1={_r1:.2f} "
+              f"({time.time()-t_pf:.1f}s)", flush=True)
+
+        # Test 2: LWREggRoll (per-shape rank dict)
+        _pf_lwr_spec = {s: RANK for s in LAYER_SHAPES.values()}
+        _pf_lwr_spec[LAYER_SHAPES["output"]] = 1  # Simulate ablation
+        _pf_fnp2, _pf_cnp2 = init_noiser(_pf_cp, LWREggRoll, _pf_lwr_spec)
+        @jax.jit
+        def _pf_eval_lwr(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
+            iterinfo = (gen_i, mid_i)
+            def policy(obs):
+                return jnp.clip(MODEL.forward(
+                    LWREggRoll, fnp, cnp, fp, cp, estk, iterinfo, obs),
+                    -1.0, 1.0)
+            state = _pf_env.reset(ep_key)
+            def scan_step(carry, _):
+                st, tr, done = carry
+                ns = _pf_env.step(st, policy(st.obs))
+                return (ns, tr + ns.reward * (1.0 - done),
+                        jnp.logical_or(done, ns.done)), None
+            (_, tr, _), _ = jax.lax.scan(
+                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
+                None, length=10)
+            return tr
+
+        t_pf2 = time.time()
+        _r2 = float(_pf_eval_lwr(jnp.int32(0), jnp.int32(0), _pf_keys[2],
+                                  _pf_fnp2, _pf_cnp2, _pf_fp, _pf_cp, _pf_estk))
+        print(f"  LWREggRoll JIT OK: m0={_r2:.2f} ({time.time()-t_pf2:.1f}s)",
+              flush=True)
+
+        JIT_EVAL_WORKS = True
+        print(f"  Pre-flight PASSED ({time.time()-t_pf:.0f}s total)", flush=True)
+    except KeyboardInterrupt:
+        print(f"\n  Pre-flight interrupted — using closure fallback.", flush=True)
+    except Exception as e:
+        print(f"\n  Pre-flight FAILED: {e}", flush=True)
+        print(f"  Using closure-based evaluation (slower but safe).", flush=True)
+
+    global USE_JIT_EVAL
+    USE_JIT_EVAL = JIT_EVAL_WORKS
+
+    # Pilot
     pilot_file = RESULTS_DIR / "pilot_results.json"
     if pilot_file.exists():
         print("\nPilot results found, loading...", flush=True)
@@ -667,37 +759,38 @@ def main():
         alloc_named = pr["allocation"]
         ordering_str = pr["phase2"]["ordering"]
         allocation = {}
-        for layer_name, rank_val in alloc_named.items():
-            allocation[LAYER_SHAPES[layer_name]] = rank_val
+        for ln, rv in alloc_named.items():
+            allocation[LAYER_SHAPES[ln]] = rv
         alloc_label = pr["allocation_label"]
         print(f"  Ordering: {ordering_str}")
         print(f"  Allocation: {alloc_named}")
     else:
-        allocation, alloc_named, ordering_str, alloc_label = run_sensitivity_pilot()
+        allocation, alloc_named, ordering_str, alloc_label = \
+            run_sensitivity_pilot()
 
-    # Step 2: Build methods
+    # Methods
+    uniform_budget = 4 * 4
+    lwr_budget = (alloc_named["input"] + 2 * alloc_named["hidden"]
+                  + alloc_named["output"])
     METHODS = [
         ("eggroll_r4", EggRoll, RANK, MAX_GENS),
         ("eggroll_r1", EggRoll, 1, MAX_GENS_FLOOR),
         (f"lwr_{alloc_label}", LWREggRoll, allocation, MAX_GENS),
     ]
 
-    uniform_budget = 4 * 4
-    lwr_budget = alloc_named["input"] + 2 * alloc_named["hidden"] + alloc_named["output"]
-
-    print(f"\nMethods to run:")
+    print(f"\nMethods:")
     for mn, nc, rs, mg in METHODS:
         if isinstance(rs, int):
-            budget = rs * 4
+            b = rs * 4
         elif isinstance(rs, dict):
-            budget = rs.get(LAYER_SHAPES["input"], 0) + \
-                     2 * rs.get(LAYER_SHAPES["hidden"], 0) + \
-                     rs.get(LAYER_SHAPES["output"], 0)
+            b = (rs.get(LAYER_SHAPES["input"], 0)
+                 + 2 * rs.get(LAYER_SHAPES["hidden"], 0)
+                 + rs.get(LAYER_SHAPES["output"], 0))
         else:
-            budget = "?"
-        print(f"  {mn}: noiser={nc.__name__}, budget={budget}, gens={mg}")
+            b = "?"
+        print(f"  {mn}: {nc.__name__}, budget={b}, gens={mg}")
 
-    # Step 3: Run all methods
+    # Run
     all_results = {
         "pilot": {"allocation": alloc_named, "ordering": ordering_str},
         "config": {
@@ -706,7 +799,7 @@ def main():
             "max_gens": MAX_GENS, "max_gens_floor": MAX_GENS_FLOOR,
             "episode_length": EPISODE_LENGTH,
             "activation": ACTIVATION, "optimizer": "sgd",
-            "architecture": [OBS_DIM] + [LAYER_SIZE] * N_LAYERS + [ACT_DIM],
+            "architecture": arch,
         },
     }
 
@@ -719,7 +812,7 @@ def main():
         for seed in SEEDS:
             result_file = RESULTS_DIR / f"{mn}_seed{seed}.json"
             if result_file.exists():
-                print(f"  [{mn} seed={seed}] found existing result, skipping.", flush=True)
+                print(f"  [{mn} seed={seed}] exists, skipping.", flush=True)
                 with open(result_file) as f:
                     r = json.load(f)
                 method_results.append(r)
@@ -728,7 +821,6 @@ def main():
             r = train(seed, noiser_class, rank_spec, mn,
                       max_gens=method_max_gens,
                       sigma_decay=SIGMA_DECAY, lr_decay=LR_DECAY)
-
             save_json(result_file, r)
             method_results.append(r)
 
@@ -741,15 +833,15 @@ def main():
             "per_seed_best": bests,
         }
 
-    # Step 4: Summary
+    # Summary
     saving_pct = (1 - lwr_budget / uniform_budget) * 100
-
     print(f"\n{'='*60}")
     print("BRAX ANT — RESULTS SUMMARY")
     print(f"{'='*60}")
     print(f"Pilot ordering: {ordering_str}")
     print(f"Pilot allocation: {alloc_named}")
-    print(f"\n{'Method':35s} {'Budget':>8s} {'Mean Best':>12s} {'Std':>8s} {'Gens':>6s}")
+    print(f"\n{'Method':35s} {'Budget':>8s} {'Mean Best':>12s} "
+          f"{'Std':>8s} {'Gens':>6s}")
     print("-" * 70)
     for mn, _, _, mg in METHODS:
         if mn not in all_results:
@@ -761,23 +853,19 @@ def main():
             b = 1 * 4
         else:
             b = lwr_budget
-        print(f"{mn:35s} {b:>8d} {s['mean_best']:>12.1f} {s['std_best']:>8.1f} {mg:>6d}")
-
-    print(f"\nEfficiency claim: LWR budget {lwr_budget} vs uniform r=4 budget {uniform_budget} "
+        print(f"{mn:35s} {b:>8d} {s['mean_best']:>12.1f} "
+              f"{s['std_best']:>8.1f} {mg:>6d}")
+    print(f"\nEfficiency: LWR budget {lwr_budget} vs uniform {uniform_budget} "
           f"= {saving_pct:.0f}% reduction")
 
     save_json(RESULTS_DIR / "summary.json", {
-        "env": ENV_NAME,
-        "architecture": [OBS_DIM] + [LAYER_SIZE] * N_LAYERS + [ACT_DIM],
-        "note": "Brax Ant LWR-EGGROLL experiment, rank 4 cap, 3-phase pilot",
-        "efficiency": {
-            "lwr_budget": lwr_budget,
-            "uniform_budget": uniform_budget,
-            "saving_pct": saving_pct,
-        },
+        "env": ENV_NAME, "architecture": arch,
+        "note": "Brax Ant LWR-EGGROLL, rank 4 cap, 3-phase pilot",
+        "efficiency": {"lwr_budget": lwr_budget,
+                       "uniform_budget": uniform_budget,
+                       "saving_pct": saving_pct},
         "results": all_results,
     })
-
     print(f"\nResults saved to {RESULTS_DIR}/", flush=True)
 
 
