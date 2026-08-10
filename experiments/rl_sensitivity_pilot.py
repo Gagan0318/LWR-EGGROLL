@@ -24,6 +24,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from strategy_selector import select_strategy_from_dict
+
 
 FULL_RANK_SET = [0, 1, 2, 4, 8]
 
@@ -189,28 +191,41 @@ def run_rl_pilot(
     print(f"\n  Rank 0 avg: {r0_avg:.1f}, Rank 1 avg: {r1_avg:.1f}")
     print(f"  Decision: {least_sensitive_name} → rank {least_rank}")
 
-    # ── Derive allocation ─────────────────────────────────────
-    available_ranks = sorted([r for r in FULL_RANK_SET if 0 < r <= max_rank], reverse=True)
+    # ── Strategy selection ────────────────────────────────────
+    # Override least-sensitive layer's degradation if Phase 3
+    # showed rank 0 is viable (negative or zero cost).
+    # This lets the selector see negative degradation → assign 0.
+    if least_rank == 0 and degradations[least_sensitive_name] >= 0:
+        # Phase 3 confirmed rank 0 is fine — make degradation negative
+        # so the selector assigns rank 0 automatically.
+        degradations[least_sensitive_name] = -abs(degradations[least_sensitive_name]) - 0.001
 
+    rec = select_strategy_from_dict(
+        degradation_scores=degradations,
+        layer_shapes=layer_shapes,
+        baseline_rank=baseline_rank,
+        max_rank=max_rank,
+        verbose=True,
+    )
+
+    # Build shape-keyed allocation for HyperscaleES
     allocation = {}
-    for i, name in enumerate(ordering):
+    for name in names:
         shape = layer_shapes[name]
-        if name == least_sensitive_name:
-            allocation[shape] = least_rank
-        elif i < len(available_ranks):
-            allocation[shape] = available_ranks[i]
-        else:
-            allocation[shape] = 1
+        allocation[shape] = rec.rank_allocation[name]
 
-    allocation_named = {name: allocation[layer_shapes[name]] for name in names}
-    total_budget = sum(allocation.values())
+    allocation_named = rec.rank_allocation
+    total_budget = rec.total_budget
 
     print(f"\n{'=' * 60}")
     print("PILOT RESULT")
     print(f"{'=' * 60}")
-    print(f"  Ordering: {' > '.join(ordering)}")
+    print(f"  Strategy:   {rec.strategy.upper()}")
+    print(f"  Confidence: {rec.confidence}")
+    print(f"  Ordering:   {' > '.join(ordering)}")
     print(f"  Allocation: {allocation_named}")
-    print(f"  Total rank budget: {total_budget}")
+    print(f"  Budget:     {total_budget}")
+    print(f"  Finding:    {rec.finding}")
     print(f"{'=' * 60}\n", flush=True)
 
-    return allocation, allocation_named, ordering
+    return allocation, allocation_named, ordering, rec
