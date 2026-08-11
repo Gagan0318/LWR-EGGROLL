@@ -61,7 +61,7 @@ ACTIVATION = "pqn"
 OPTIMIZER = optax.sgd
 
 # vmap chunk size — lower this if GPU OOM (e.g. 512, 256)
-VMAP_CHUNK = 2048
+VMAP_CHUNK = 64  # Conservative for T4 16GB; auto-halves on OOM
 
 MAX_GENS = 150
 MAX_GENS_FLOOR = 30
@@ -260,16 +260,50 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
     _eval_chunk_vmapped = _make_eval_chunk(
         frozen_noiser_params, frozen_params, es_tree_key)
 
-    def eval_population(gen_i, all_mids, all_keys, cnp, cp):
-        if VMAP_CHUNK >= POP_SIZE:
-            return _eval_chunk_vmapped(gen_i, all_mids, all_keys, cnp, cp)
+    # Also build a sequential JIT evaluator as fallback
+    def _make_eval_single_jit(fnp, fp, estk):
+        @jax.jit
+        def _eval_one(gen_i, mid_i, ep_key, cnp, cp):
+            iterinfo = (gen_i, mid_i)
+            def policy(obs):
+                return jnp.clip(
+                    MODEL.forward(NOISER, fnp, cnp, fp, cp, estk, iterinfo, obs),
+                    -1.0, 1.0)
+            state = env.reset(ep_key)
+            def scan_step(carry, _):
+                st, total_reward, done = carry
+                action = policy(st.obs)
+                ns = env.step(st, action)
+                reward = ns.reward * (1.0 - done)
+                done = jnp.logical_or(done, ns.done)
+                return (ns, total_reward + reward, done), None
+            (_, total_reward, _), _ = jax.lax.scan(
+                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
+                None, length=EPISODE_LENGTH)
+            return total_reward
+        return _eval_one
+
+    _eval_one_jit = _make_eval_single_jit(
+        frozen_noiser_params, frozen_params, es_tree_key)
+
+    _use_vmap = True
+    _active_chunk = VMAP_CHUNK
+
+    def eval_population_vmap(gen_i, all_mids, all_keys, cnp, cp, chunk):
         chunks = []
-        for start in range(0, POP_SIZE, VMAP_CHUNK):
-            end = min(start + VMAP_CHUNK, POP_SIZE)
+        for start in range(0, POP_SIZE, chunk):
+            end = min(start + chunk, POP_SIZE)
             chunk_rewards = _eval_chunk_vmapped(
                 gen_i, all_mids[start:end], all_keys[start:end], cnp, cp)
             chunks.append(chunk_rewards)
         return jnp.concatenate(chunks)
+
+    def eval_population_sequential(gen_i, all_keys, cnp, cp):
+        rewards = []
+        for mid in range(POP_SIZE):
+            r = _eval_one_jit(gen_i, jnp.int32(mid), all_keys[mid], cnp, cp)
+            rewards.append(r)
+        return jnp.stack(rewards)
 
     for gen in range(resumed_gen, max_gens):
         t_gen = time.time()
@@ -279,11 +313,47 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
         episode_key = all_keys[0]
         member_keys = all_keys[1:]
 
-        # Evaluate ALL members in vmapped GPU call
         gen_i = jnp.int32(gen)
-        gen_fitnesses_arr = eval_population(
-            gen_i, all_mids, member_keys,
-            current_noiser_params, current_params)
+
+        # Try vmap, auto-fallback on OOM
+        if _use_vmap:
+            try:
+                gen_fitnesses_arr = eval_population_vmap(
+                    gen_i, all_mids, member_keys,
+                    current_noiser_params, current_params, _active_chunk)
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "out of memory" in err_msg or "resource_exhausted" in err_msg:
+                    # Try halving chunk size
+                    _active_chunk = max(1, _active_chunk // 2)
+                    print(f"  \u26a0 vmap OOM at chunk {_active_chunk * 2}, "
+                          f"retrying with chunk {_active_chunk}...", flush=True)
+                    if _active_chunk < 8:
+                        print(f"  \u26a0 vmap chunk too small, falling back to "
+                              f"sequential (slower but safe)", flush=True)
+                        _use_vmap = False
+                        gen_fitnesses_arr = eval_population_sequential(
+                            gen_i, member_keys,
+                            current_noiser_params, current_params)
+                    else:
+                        try:
+                            gen_fitnesses_arr = eval_population_vmap(
+                                gen_i, all_mids, member_keys,
+                                current_noiser_params, current_params,
+                                _active_chunk)
+                        except Exception:
+                            print(f"  \u26a0 vmap failed again, falling back to "
+                                  f"sequential", flush=True)
+                            _use_vmap = False
+                            gen_fitnesses_arr = eval_population_sequential(
+                                gen_i, member_keys,
+                                current_noiser_params, current_params)
+                else:
+                    raise
+        else:
+            gen_fitnesses_arr = eval_population_sequential(
+                gen_i, member_keys,
+                current_noiser_params, current_params)
 
         # NaN handling
         nan_mask = jnp.isnan(gen_fitnesses_arr)
