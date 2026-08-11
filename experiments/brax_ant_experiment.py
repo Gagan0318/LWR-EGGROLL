@@ -16,15 +16,15 @@ Delete results/brax_ant/ to force full restart.
 
 IMPORTANT: Changing any config constants (POP_SIZE, pilot gens, seeds, etc.)
 after partial completion requires clearing cache: rm -rf results/brax_ant/cache/
+
+POPULATION EVALUATION: Uses jax.vmap across the full population for GPU
+parallelism. Set VMAP_CHUNK < POP_SIZE if you hit GPU OOM.
 """
 import os
-# XLA persistent compilation cache — survives session restarts on cluster
-try:
-    os.makedirs("/jupyter/work/jax_cache", exist_ok=True)
-    os.environ.setdefault("XLA_FLAGS",
-        "--xla_gpu_persistent_cache_dir=/jupyter/work/jax_cache")
-except OSError:
-    pass  # Not on cluster — skip XLA cache
+# XLA persistent compilation cache — survives session restarts
+os.environ.setdefault("XLA_FLAGS",
+    "--xla_gpu_persistent_cache_dir=/jupyter/work/jax_cache")
+os.makedirs("/jupyter/work/jax_cache", exist_ok=True)
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 
 import ast
@@ -59,6 +59,9 @@ N_LAYERS = 3
 LAYER_SIZE = 256
 ACTIVATION = "pqn"
 OPTIMIZER = optax.sgd
+
+# vmap chunk size — lower this if GPU OOM (e.g. 512, 256)
+VMAP_CHUNK = 2048
 
 MAX_GENS = 150
 MAX_GENS_FLOOR = 30
@@ -98,7 +101,6 @@ OBS_DIM, ACT_DIM = get_dims()
 
 # ── Checkpoint I/O (numpy-safe for cross-session pickle) ──────────
 def _to_numpy_leaf(x):
-    """Convert JAX arrays to numpy for pickle. Leave others unchanged."""
     if hasattr(x, 'dtype') and hasattr(x, 'shape') and not isinstance(x, np.ndarray):
         try:
             return np.asarray(x)
@@ -107,7 +109,6 @@ def _to_numpy_leaf(x):
     return x
 
 def _to_jax_leaf(x):
-    """Convert numpy arrays back to JAX on load."""
     if isinstance(x, np.ndarray):
         return jnp.asarray(x)
     return x
@@ -162,11 +163,11 @@ def init_noiser(params, noiser_class, rank_spec, sigma=SIGMA, lr=LR):
         params, sigma, lr, solver=OPTIMIZER, solver_kwargs={}, rank=rank_spec)
     return fnp, np_
 
-# ── Training Loop ─────────────────────────────────────────────────
+# ── Training Loop (VMAPPED population evaluation) ─────────────────
 def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
           sigma=SIGMA, lr=LR, sigma_decay=SIGMA_DECAY, lr_decay=LR_DECAY,
           initial_state=None, return_checkpoint_at=None):
-    """Train with 10-minute crash-recovery checkpoints.
+    """Train with vmapped population evaluation and crash-recovery checkpoints.
 
     If return_checkpoint_at is set, returns (result_dict, checkpoint_state).
     Otherwise returns result_dict.
@@ -217,18 +218,28 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
     n_params = sum(x.size for x in jax.tree_util.tree_leaves(current_params))
     print(f"  [{label} seed={seed}] params: {n_params:,}", flush=True)
 
-    # Two evaluation strategies: JIT (fast) and closure fallback (slow but safe)
-    use_jit = globals().get('USE_JIT_EVAL', True)
+    # ── VMAPPED population evaluator ──────────────────────────────
+    # frozen_noiser_params (fnp), frozen_params (fp), and es_tree_key (estk)
+    # contain function objects (optax solver) that can't be traced by JAX.
+    # They're captured as closures (compile-time constants) instead.
+    # Only cnp and cp (pure arrays that change per-gen) are passed as args.
 
-    if use_jit:
-        # JIT: gen_i and mid_i are traced abstract ints → ONE kernel compiled.
-        @jax.jit
-        def _eval_member(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
+    # Pre-build member index array (reused every gen)
+    all_mids = jnp.arange(POP_SIZE, dtype=jnp.int32)
+
+    checkpoint_state_for_return = None
+    t0 = time.time()
+    last_ckpt_time = time.time()
+
+    # Build vmapped evaluator once — closures capture fnp, fp, estk, env
+    # which don't change within this train() call.
+    def _make_eval_chunk(fnp, fp, estk):
+        def _eval_single(gen_i, mid_i, ep_key, cnp, cp):
             iterinfo = (gen_i, mid_i)
             def policy(obs):
                 return jnp.clip(
-                    MODEL.forward(NOISER, fnp, cnp, fp, cp, estk,
-                                  iterinfo, obs), -1.0, 1.0)
+                    MODEL.forward(NOISER, fnp, cnp, fp, cp, estk, iterinfo, obs),
+                    -1.0, 1.0)
             state = env.reset(ep_key)
             def scan_step(carry, _):
                 st, total_reward, done = carry
@@ -241,55 +252,38 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
                 scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
                 None, length=EPISODE_LENGTH)
             return total_reward
+        return jax.jit(jax.vmap(
+            _eval_single,
+            in_axes=(None, 0, 0, None, None)
+        ))
 
-    def _eval_member_closure(gen, mid, ep_key):
-        """Fallback: closure-based, one JIT trace per (gen, mid) combo."""
-        iterinfo = (jnp.int32(gen), jnp.int32(mid))
-        def policy(obs):
-            return jnp.clip(
-                MODEL.forward(NOISER, frozen_noiser_params,
-                              current_noiser_params, frozen_params,
-                              current_params, es_tree_key, iterinfo, obs),
-                -1.0, 1.0)
-        state = env.reset(ep_key)
-        def scan_step(carry, _):
-            st, total_reward, done = carry
-            action = policy(st.obs)
-            ns = env.step(st, action)
-            reward = ns.reward * (1.0 - done)
-            done = jnp.logical_or(done, ns.done)
-            return (ns, total_reward + reward, done), None
-        (_, total_reward, _), _ = jax.lax.scan(
-            scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
-            None, length=EPISODE_LENGTH)
-        return total_reward
+    _eval_chunk_vmapped = _make_eval_chunk(
+        frozen_noiser_params, frozen_params, es_tree_key)
 
-    checkpoint_state_for_return = None
-    t0 = time.time()
-    last_ckpt_time = time.time()
+    def eval_population(gen_i, all_mids, all_keys, cnp, cp):
+        if VMAP_CHUNK >= POP_SIZE:
+            return _eval_chunk_vmapped(gen_i, all_mids, all_keys, cnp, cp)
+        chunks = []
+        for start in range(0, POP_SIZE, VMAP_CHUNK):
+            end = min(start + VMAP_CHUNK, POP_SIZE)
+            chunk_rewards = _eval_chunk_vmapped(
+                gen_i, all_mids[start:end], all_keys[start:end], cnp, cp)
+            chunks.append(chunk_rewards)
+        return jnp.concatenate(chunks)
 
     for gen in range(resumed_gen, max_gens):
         t_gen = time.time()
 
+        # Split keys: keep as JAX array
         all_keys = jax.random.split(episode_key, POP_SIZE + 1)
         episode_key = all_keys[0]
         member_keys = all_keys[1:]
 
-        rewards = []
-        if use_jit:
-            gen_i = jnp.int32(gen)
-            for mid in range(POP_SIZE):
-                r = _eval_member(
-                    gen_i, jnp.int32(mid), member_keys[mid],
-                    frozen_noiser_params, current_noiser_params,
-                    frozen_params, current_params, es_tree_key)
-                rewards.append(r)
-        else:
-            for mid in range(POP_SIZE):
-                r = _eval_member_closure(gen, mid, member_keys[mid])
-                rewards.append(float(r))
-
-        gen_fitnesses_arr = jnp.array(rewards) if not use_jit else jnp.stack(rewards)
+        # Evaluate ALL members in vmapped GPU call
+        gen_i = jnp.int32(gen)
+        gen_fitnesses_arr = eval_population(
+            gen_i, all_mids, member_keys,
+            current_noiser_params, current_params)
 
         # NaN handling
         nan_mask = jnp.isnan(gen_fitnesses_arr)
@@ -378,10 +372,68 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
     return result
 
 
+# ── Pre-flight check ──────────────────────────────────────────────
+def run_preflight():
+    """Quick JIT test with short episodes to verify everything compiles."""
+    print(f"\n  Pre-flight: testing JIT evaluation (should complete in 1-3 min)...")
+    print(f"  (If stuck >5 min, press Ctrl+C to use fallback mode)")
+    env = make_env()
+    key = jax.random.PRNGKey(42)
+    key, model_key, es_key, ep_key = jax.random.split(key, 4)
+    fp, p, sm, em = init_model(model_key)
+    estk = hs.models.common.simple_es_tree_key(p, es_key, sm)
+
+    # Test EggRoll
+    t0 = time.time()
+    fnp, cnp = init_noiser(p, EggRoll, RANK)
+    def _eval_one_egg(mid_i, ep_key):
+        iterinfo = (jnp.int32(0), mid_i)
+        def policy(obs):
+            return jnp.clip(MODEL.forward(EggRoll, fnp, cnp, fp, p, estk, iterinfo, obs), -1.0, 1.0)
+        state = env.reset(ep_key)
+        def scan_step(carry, _):
+            st, tr, done = carry
+            a = policy(st.obs)
+            ns = env.step(st, a)
+            r = ns.reward * (1.0 - done)
+            done = jnp.logical_or(done, ns.done)
+            return (ns, tr + r, done), None
+        (_, tr, _), _ = jax.lax.scan(scan_step, (state, jnp.float32(0.0), jnp.bool_(False)), None, length=10)
+        return tr
+    _vmap_egg = jax.jit(jax.vmap(_eval_one_egg, in_axes=(0, 0)))
+    test_mids = jnp.arange(4, dtype=jnp.int32)
+    test_keys = jax.random.split(ep_key, 4)
+    test_r = _vmap_egg(test_mids, test_keys)
+    print(f"  EggRoll JIT OK: m0={float(test_r[0]):.2f}, m1={float(test_r[1]):.2f} ({time.time()-t0:.1f}s)")
+
+    # Test LWREggRoll
+    t0 = time.time()
+    lwr_spec = {s: RANK for s in LAYER_SHAPES.values()}
+    fnp2, cnp2 = init_noiser(p, LWREggRoll, lwr_spec)
+    def _eval_one_lwr(mid_i, ep_key):
+        iterinfo = (jnp.int32(0), mid_i)
+        def policy(obs):
+            return jnp.clip(MODEL.forward(LWREggRoll, fnp2, cnp2, fp, p, estk, iterinfo, obs), -1.0, 1.0)
+        state = env.reset(ep_key)
+        def scan_step(carry, _):
+            st, tr, done = carry
+            a = policy(st.obs)
+            ns = env.step(st, a)
+            r = ns.reward * (1.0 - done)
+            done = jnp.logical_or(done, ns.done)
+            return (ns, tr + r, done), None
+        (_, tr, _), _ = jax.lax.scan(scan_step, (state, jnp.float32(0.0), jnp.bool_(False)), None, length=10)
+        return tr
+    _vmap_lwr = jax.jit(jax.vmap(_eval_one_lwr, in_axes=(0, 0)))
+    test_r2 = _vmap_lwr(test_mids, test_keys)
+    print(f"  LWREggRoll JIT OK: m0={float(test_r2[0]):.2f} ({time.time()-t0:.1f}s)")
+    print(f"  Pre-flight PASSED ({time.time()-t0:.0f}s total)\n")
+
+
 # ── Phase 1: Elevation ────────────────────────────────────────────
 def run_phase1():
     print(f"\n{'='*60}")
-    print("SENSITIVITY PILOT — Phase 1 (Elevation / Magnitude)")
+    print("SENSITIVITY PILOT \u2014 Phase 1 (Elevation / Magnitude)")
     print(f"{'='*60}")
     print(f"  Checkpoint gens: {PHASE1_CHECKPOINT_GENS}, "
           f"Elevation gens: {PHASE1_ELEVATION_GENS}, Seeds: {PILOT_SEEDS}")
@@ -397,10 +449,10 @@ def run_phase1():
         if cached is not None and load_pickle(ckpt_state_file) is not None:
             checkpoint_fitness = cached["checkpoint_fitness"]
             checkpoint_state = load_pickle(ckpt_state_file)
-            print(f"\n  Phase 1 — Checkpoint seed={seed} from cache "
+            print(f"\n  Phase 1 \u2014 Checkpoint seed={seed} from cache "
                   f"(fitness={checkpoint_fitness:.1f})", flush=True)
         else:
-            print(f"\n  Phase 1 — Training shared checkpoint (seed={seed})...",
+            print(f"\n  Phase 1 \u2014 Training shared checkpoint (seed={seed})...",
                   flush=True)
             checkpoint_result, checkpoint_state = train(
                 seed, EggRoll, RANK, f"phase1_checkpoint",
@@ -421,11 +473,11 @@ def run_phase1():
             cached_elev = load_json(elev_cache)
             if cached_elev is not None:
                 phase1_results[f"{layer_name}_seed{seed}"] = cached_elev
-                print(f"  Phase 1 — {layer_name} seed={seed} from cache "
+                print(f"  Phase 1 \u2014 {layer_name} seed={seed} from cache "
                       f"(|delta|={cached_elev['abs_delta']:.1f})", flush=True)
                 continue
 
-            print(f"\n  Phase 1 — Elevating {layer_name} {layer_shape} to r=8 "
+            print(f"\n  Phase 1 \u2014 Elevating {layer_name} {layer_shape} to r=8 "
                   f"(seed={seed}):", flush=True)
             elevated_spec = {s: RANK for s in LAYER_SHAPES.values()}
             elevated_spec[layer_shape] = 8
@@ -473,7 +525,7 @@ def run_phase1():
 # ── Phase 2: Causal Ablation ──────────────────────────────────────
 def run_phase2():
     print(f"\n{'='*60}")
-    print("SENSITIVITY PILOT — Phase 2 (Causal Ablation)")
+    print("SENSITIVITY PILOT \u2014 Phase 2 (Causal Ablation)")
     print(f"{'='*60}")
     print(f"  Gens: {PHASE2_GENS}, Seeds: {PILOT_SEEDS}, "
           f"Baseline: r={RANK}, Ablation: r=1")
@@ -541,7 +593,7 @@ def run_phase3(ordering, degradations):
     least_sensitive = ordering[-1]
     ls_shape = degradations[least_sensitive]["shape"]
     print(f"\n{'='*60}")
-    print(f"SENSITIVITY PILOT — Phase 3 (Binary Inclusion)")
+    print(f"SENSITIVITY PILOT \u2014 Phase 3 (Binary Inclusion)")
     print(f"{'='*60}")
     print(f"  Layer: {least_sensitive} {ls_shape}, r=0 vs r=1")
 
@@ -663,92 +715,17 @@ def main():
                      + 2 * LAYER_SHAPES["hidden"][0] * LAYER_SHAPES["hidden"][1]
                      + LAYER_SHAPES["output"][0] * LAYER_SHAPES["output"][1])
     print("=" * 60)
-    print("BRAX ANT — FULL LWR-EGGROLL EXPERIMENT")
+    print("BRAX ANT \u2014 FULL LWR-EGGROLL EXPERIMENT")
     arch = [OBS_DIM] + [LAYER_SIZE] * N_LAYERS + [ACT_DIM]
     print(f"Architecture: {arch}  ({actual_params:,} weight params)")
     print(f"POP={POP_SIZE}, SIGMA={SIGMA}, LR={LR}, MAX_GENS={MAX_GENS}")
     print(f"SIGMA_DECAY={SIGMA_DECAY}, LR_DECAY={LR_DECAY}")
     print(f"Seeds: {SEEDS}, Checkpoint: {CHECKPOINT_INTERVAL_S}s")
+    print(f"VMAP_CHUNK: {VMAP_CHUNK}")
     print("=" * 60, flush=True)
 
-    # ── Pre-flight: verify JIT evaluation works ──
-    print("\nPre-flight: testing JIT evaluation (should complete in 1-3 min)...",
-          flush=True)
-    print("  (If stuck >5 min, press Ctrl+C to use fallback mode)", flush=True)
-    JIT_EVAL_WORKS = False
-    try:
-        _pf_env = make_env()
-        _pf_key = jax.random.PRNGKey(9999)
-        _pf_key, _pf_mk, _pf_ek = jax.random.split(_pf_key, 3)
-        _pf_fp, _pf_cp, _pf_sm, _pf_em = init_model(_pf_mk)
-        _pf_estk = hs.models.common.simple_es_tree_key(_pf_cp, _pf_ek, _pf_sm)
-        _pf_keys = jax.random.split(jax.random.PRNGKey(42), 4)
-
-        # Test 1: EggRoll (uniform rank)
-        _pf_fnp, _pf_cnp = init_noiser(_pf_cp, EggRoll, RANK)
-        @jax.jit
-        def _pf_eval_egg(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
-            iterinfo = (gen_i, mid_i)
-            def policy(obs):
-                return jnp.clip(MODEL.forward(
-                    EggRoll, fnp, cnp, fp, cp, estk, iterinfo, obs), -1.0, 1.0)
-            state = _pf_env.reset(ep_key)
-            def scan_step(carry, _):
-                st, tr, done = carry
-                ns = _pf_env.step(st, policy(st.obs))
-                return (ns, tr + ns.reward * (1.0 - done),
-                        jnp.logical_or(done, ns.done)), None
-            (_, tr, _), _ = jax.lax.scan(
-                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
-                None, length=10)
-            return tr
-
-        t_pf = time.time()
-        _r0 = float(_pf_eval_egg(jnp.int32(0), jnp.int32(0), _pf_keys[0],
-                                  _pf_fnp, _pf_cnp, _pf_fp, _pf_cp, _pf_estk))
-        _r1 = float(_pf_eval_egg(jnp.int32(0), jnp.int32(1), _pf_keys[1],
-                                  _pf_fnp, _pf_cnp, _pf_fp, _pf_cp, _pf_estk))
-        print(f"  EggRoll JIT OK: m0={_r0:.2f}, m1={_r1:.2f} "
-              f"({time.time()-t_pf:.1f}s)", flush=True)
-
-        # Test 2: LWREggRoll (per-shape rank dict)
-        _pf_lwr_spec = {s: RANK for s in LAYER_SHAPES.values()}
-        _pf_lwr_spec[LAYER_SHAPES["output"]] = 1  # Simulate ablation
-        _pf_fnp2, _pf_cnp2 = init_noiser(_pf_cp, LWREggRoll, _pf_lwr_spec)
-        @jax.jit
-        def _pf_eval_lwr(gen_i, mid_i, ep_key, fnp, cnp, fp, cp, estk):
-            iterinfo = (gen_i, mid_i)
-            def policy(obs):
-                return jnp.clip(MODEL.forward(
-                    LWREggRoll, fnp, cnp, fp, cp, estk, iterinfo, obs),
-                    -1.0, 1.0)
-            state = _pf_env.reset(ep_key)
-            def scan_step(carry, _):
-                st, tr, done = carry
-                ns = _pf_env.step(st, policy(st.obs))
-                return (ns, tr + ns.reward * (1.0 - done),
-                        jnp.logical_or(done, ns.done)), None
-            (_, tr, _), _ = jax.lax.scan(
-                scan_step, (state, jnp.float32(0.0), jnp.bool_(False)),
-                None, length=10)
-            return tr
-
-        t_pf2 = time.time()
-        _r2 = float(_pf_eval_lwr(jnp.int32(0), jnp.int32(0), _pf_keys[2],
-                                  _pf_fnp2, _pf_cnp2, _pf_fp, _pf_cp, _pf_estk))
-        print(f"  LWREggRoll JIT OK: m0={_r2:.2f} ({time.time()-t_pf2:.1f}s)",
-              flush=True)
-
-        JIT_EVAL_WORKS = True
-        print(f"  Pre-flight PASSED ({time.time()-t_pf:.0f}s total)", flush=True)
-    except KeyboardInterrupt:
-        print(f"\n  Pre-flight interrupted — using closure fallback.", flush=True)
-    except Exception as e:
-        print(f"\n  Pre-flight FAILED: {e}", flush=True)
-        print(f"  Using closure-based evaluation (slower but safe).", flush=True)
-
-    global USE_JIT_EVAL
-    USE_JIT_EVAL = JIT_EVAL_WORKS
+    # Pre-flight
+    run_preflight()
 
     # Pilot
     pilot_file = RESULTS_DIR / "pilot_results.json"
@@ -836,7 +813,7 @@ def main():
     # Summary
     saving_pct = (1 - lwr_budget / uniform_budget) * 100
     print(f"\n{'='*60}")
-    print("BRAX ANT — RESULTS SUMMARY")
+    print("BRAX ANT \u2014 RESULTS SUMMARY")
     print(f"{'='*60}")
     print(f"Pilot ordering: {ordering_str}")
     print(f"Pilot allocation: {alloc_named}")
