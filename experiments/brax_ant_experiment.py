@@ -21,15 +21,17 @@ POPULATION EVALUATION: Uses jax.vmap across the full population for GPU
 parallelism. Set VMAP_CHUNK < POP_SIZE if you hit GPU OOM.
 """
 import os
-# XLA persistent compilation cache — survives session restarts
-os.environ.setdefault("XLA_FLAGS",
-    "--xla_gpu_persistent_cache_dir=/jupyter/work/jax_cache")
-os.makedirs("/jupyter/work/jax_cache", exist_ok=True)
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.90"
 
 import ast
+
+def _safe_wrap_key(leaf):
+    """Convert legacy PRNG keys to typed; skip if already typed."""
+    if hasattr(leaf, "ndim") and leaf.ndim >= 1:
+        return jax.random.wrap_key_data(leaf)
+    return leaf
 import json
 import pickle
+import cloudpickle
 import sys
 import time
 from pathlib import Path
@@ -61,7 +63,7 @@ ACTIVATION = "pqn"
 OPTIMIZER = optax.sgd
 
 # vmap chunk size — lower this if GPU OOM (e.g. 512, 256)
-VMAP_CHUNK = 64  # Conservative for T4 16GB; auto-halves on OOM
+VMAP_CHUNK = 256  # Conservative for T4 16GB; auto-halves on OOM
 
 MAX_GENS = 150
 MAX_GENS_FLOOR = 30
@@ -118,7 +120,7 @@ def save_pickle(filepath, data):
     np_data = jax.tree_util.tree_map(_to_numpy_leaf, data)
     tmp = filepath.with_suffix('.tmp')
     with open(tmp, 'wb') as f:
-        pickle.dump(np_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+        cloudpickle.dump(np_data, f, protocol=pickle.HIGHEST_PROTOCOL)
     tmp.rename(filepath)
 
 def load_pickle(filepath):
@@ -127,7 +129,7 @@ def load_pickle(filepath):
         return None
     try:
         with open(filepath, 'rb') as f:
-            np_data = pickle.load(f)
+            np_data = cloudpickle.load(f)
         return jax.tree_util.tree_map(_to_jax_leaf, np_data)
     except Exception as e:
         print(f"  WARNING: corrupt checkpoint {filepath}, ignoring: {e}", flush=True)
@@ -190,6 +192,8 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
         scan_map = existing_ckpt['scan_map']
         es_map = existing_ckpt['es_map']
         es_tree_key = existing_ckpt['es_tree_key']
+        es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
+        es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
         frozen_noiser_params = existing_ckpt['frozen_noiser_params']
         current_noiser_params = existing_ckpt['noiser_params']
         episode_key = existing_ckpt['episode_key']
@@ -202,6 +206,8 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
             scan_map = initial_state['scan_map']
             es_map = initial_state['es_map']
             es_tree_key = initial_state['es_tree_key']
+            es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
+            es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
             frozen_noiser_params, current_noiser_params = init_noiser(
                 current_params, noiser_class, rank_spec, sigma=sigma, lr=lr)
         else:
@@ -210,6 +216,8 @@ def train(seed, noiser_class, rank_spec, label, max_gens=MAX_GENS,
             frozen_params, current_params, scan_map, es_map = init_model(model_key)
             es_tree_key = hs.models.common.simple_es_tree_key(
                 current_params, es_key, scan_map)
+            es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
+            es_tree_key = jax.tree.map(_safe_wrap_key, es_tree_key)
             frozen_noiser_params, current_noiser_params = init_noiser(
                 current_params, noiser_class, rank_spec, sigma=sigma, lr=lr)
         episode_key = jax.random.PRNGKey(seed + 10000)
@@ -750,6 +758,22 @@ def run_sensitivity_pilot():
     alloc_label = "_".join(
         str(alloc_named[n]) for n in ["input", "hidden", "output"])
 
+    # Build rank-8-ceiling allocation (same ordering, higher tiers)
+    rank_tiers_r8 = [8, 4]
+    allocation_r8 = {}
+    alloc_named_r8 = {}
+    for i, layer_name in enumerate(ordering):
+        shape = LAYER_SHAPES[layer_name]
+        if i == len(ordering) - 1:
+            allocation_r8[shape] = phase3_decision
+        else:
+            allocation_r8[shape] = rank_tiers_r8[min(i, len(rank_tiers_r8) - 1)]
+        alloc_named_r8[layer_name] = allocation_r8[shape]
+    alloc_label_r8 = "_".join(
+        str(alloc_named_r8[n]) for n in ["input", "hidden", "output"])
+    lwr_budget_r8 = (alloc_named_r8["input"] + 2 * alloc_named_r8["hidden"]
+                     + alloc_named_r8["output"])
+
     save_json(RESULTS_DIR / "pilot_results.json", {
         "phase1": {"ordering": p1_ord_str, "summary": p1_summary},
         "phase2": {
@@ -776,7 +800,8 @@ def run_sensitivity_pilot():
     print(f"  Allocation: {alloc_named} (label: {alloc_label})")
     print(f"  Budget: {actual_budget} (vs uniform r=4: 16)")
     print(f"{'='*60}\n", flush=True)
-    return allocation, alloc_named, ordering_str, alloc_label
+    return (allocation, alloc_named, ordering_str, alloc_label,
+            allocation_r8, alloc_named_r8, alloc_label_r8)
 
 
 # ── Main ──────────────────────────────────────────────────────────
@@ -812,17 +837,21 @@ def main():
         print(f"  Ordering: {ordering_str}")
         print(f"  Allocation: {alloc_named}")
     else:
-        allocation, alloc_named, ordering_str, alloc_label = \
+        (allocation, alloc_named, ordering_str, alloc_label,
+         allocation_r8, alloc_named_r8, alloc_label_r8) = \
             run_sensitivity_pilot()
 
     # Methods
     uniform_budget = 4 * 4
     lwr_budget = (alloc_named["input"] + 2 * alloc_named["hidden"]
                   + alloc_named["output"])
+    lwr_budget_r8 = (alloc_named_r8["input"] + 2 * alloc_named_r8["hidden"]
+                     + alloc_named_r8["output"])
     METHODS = [
         ("eggroll_r4", EggRoll, RANK, MAX_GENS),
         ("eggroll_r1", EggRoll, 1, MAX_GENS_FLOOR),
         (f"lwr_{alloc_label}", LWREggRoll, allocation, MAX_GENS),
+        (f"lwr_r8cap_{alloc_label_r8}", LWREggRoll, allocation_r8, MAX_GENS),
     ]
 
     print(f"\nMethods:")
@@ -898,6 +927,8 @@ def main():
             b = uniform_budget
         elif mn == "eggroll_r1":
             b = 1 * 4
+        elif "r8cap" in mn:
+            b = lwr_budget_r8
         else:
             b = lwr_budget
         print(f"{mn:35s} {b:>8d} {s['mean_best']:>12.1f} "
