@@ -845,13 +845,15 @@ def main():
     uniform_budget = 4 * 4
     lwr_budget = (alloc_named["input"] + 2 * alloc_named["hidden"]
                   + alloc_named["output"])
+    alloc_named_r8 = {k: min(v * 2, 8) for k, v in alloc_named.items()}
+    allocation_r8 = {LAYER_SHAPES[k]: v for k, v in alloc_named_r8.items()}
     lwr_budget_r8 = (alloc_named_r8["input"] + 2 * alloc_named_r8["hidden"]
                      + alloc_named_r8["output"])
     METHODS = [
         ("eggroll_r4", EggRoll, RANK, MAX_GENS),
         ("eggroll_r1", EggRoll, 1, MAX_GENS_FLOOR),
         (f"lwr_{alloc_label}", LWREggRoll, allocation, MAX_GENS),
-        (f"lwr_r8cap_{alloc_label_r8}", LWREggRoll, allocation_r8, MAX_GENS),
+        ("lwr_8_4_0", LWREggRoll, allocation_r8, MAX_GENS),
     ]
 
     print(f"\nMethods:")
