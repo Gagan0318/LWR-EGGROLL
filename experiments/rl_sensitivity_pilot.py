@@ -198,7 +198,7 @@ def run_rl_pilot(
     if least_rank == 0 and degradations[least_sensitive_name] >= 0:
         # Phase 3 confirmed rank 0 is fine — make degradation negative
         # so the selector assigns rank 0 automatically.
-        degradations[least_sensitive_name] = -abs(degradations[least_sensitive_name]) - 0.001
+        degradations[least_sensitive_name] = -999.0  # sentinel for strategy_selector Phase 3 confirmation
 
     rec = select_strategy_from_dict(
         degradation_scores=degradations,

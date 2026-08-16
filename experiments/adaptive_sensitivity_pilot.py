@@ -454,9 +454,9 @@ class AdaptiveSensitivityPilot:
             return allocation
 
         else:
-            # Allocation mode: rank layers by Phase 1 sensitivity
+            # Allocation mode: rank layers by Phase 2 degradation (primary)
             sorted_by_sensitivity = sorted(
-                phase1_results, key=lambda x: x.mean, reverse=True
+                phase2_results, key=lambda x: x.mean, reverse=True
             )
             n_layers = len(sorted_by_sensitivity)
 
@@ -472,11 +472,14 @@ class AdaptiveSensitivityPilot:
                 p2 = p2_by_shape[shape]
 
                 if i == n_layers - 1:
-                    # Least sensitive layer: check Phase 2
-                    if p2.mean <= 0:
-                        allocation[shape] = 0
-                    else:
-                        allocation[shape] = 1
+                    # Least sensitive layer: Phase 3 head-to-head
+                    # (rank 0 vs rank 1, run externally or flagged for
+                    # manual validation). Default to rank 1 unless
+                    # Phase 3 confirms rank 0 is strictly better.
+                    # Note: automated Phase 3 runs are performed as
+                    # dedicated experiments; the pilot flags the
+                    # candidate layer and defaults to the safe choice.
+                    allocation[shape] = 1  # safe default; Phase 3 overrides
                 else:
                     # Proportional assignment based on sensitivity position
                     # Most sensitive → highest available, etc.
@@ -533,18 +536,12 @@ class AdaptiveSensitivityPilot:
         shape_to_name = dict(zip(self.shapes_list, self.names_list))
         allocation_named = {shape_to_name[s]: r for s, r in allocation.items()}
 
-        # Sensitivity ordering: from Phase 1 in allocation mode,
-        # from Phase 2 degradation in binary inclusion mode
-        if phase1_results:
-            ordering = [
-                r.layer_name
-                for r in sorted(phase1_results, key=lambda x: x.mean, reverse=True)
-            ]
-        else:
-            ordering = [
-                r.layer_name
-                for r in sorted(phase2_results, key=lambda x: x.mean, reverse=True)
-            ]
+        # Sensitivity ordering: always from Phase 2 (primary)
+        # Phase 1 is confirmatory only — recorded but does not drive ordering
+        ordering = [
+            r.layer_name
+            for r in sorted(phase2_results, key=lambda x: x.mean, reverse=True)
+        ]
 
         total_budget = sum(allocation.values())
         elapsed = time.time() - t_start
