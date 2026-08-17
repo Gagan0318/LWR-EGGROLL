@@ -529,8 +529,51 @@ class AdaptiveSensitivityPilot:
         # Phase 2
         baseline_acc, phase2_results = self._run_phase2(seeds)
 
-        # Derive allocation
+        # Phase 2 ordering (needed for Phase 3 candidate selection)
+        ordering_p2 = [
+            r.layer_name
+            for r in sorted(phase2_results, key=lambda x: x.mean, reverse=True)
+        ]
+
+        # Derive allocation (Phase 3 will override least-sensitive if needed)
         allocation = self._assign_ranks(phase1_results, phase2_results)
+
+        # ── Phase 3: head-to-head rank 0 vs rank 1 ─────────────────
+        if self.mode != "binary_inclusion":
+            least_name = ordering_p2[-1]
+            least_shape = [s for s, n in zip(self.shapes_list, self.names_list)
+                           if n == least_name][0]
+            print(f"\n{'=' * 50}")
+            print(f"PHASE 3: Binary Inclusion — {least_name} {least_shape}")
+            print(f"  Head-to-head: rank 0 vs rank 1")
+            print(f"  Seeds: {seeds}")
+            print(f"{'=' * 50}")
+
+            spec_r0 = dict(allocation)
+            spec_r0[least_shape] = 0
+            spec_r1 = dict(allocation)
+            spec_r1[least_shape] = 1
+
+            print(f"\n  Condition A: {least_name} at rank 0 (frozen)")
+            r0_results = self._run_condition(spec_r0, f"phase3_{least_name}_r0", seeds)
+            r0_accs = [r["best_test_acc"] for r in r0_results]
+            r0_mean = float(np.mean(r0_accs))
+
+            print(f"\n  Condition B: {least_name} at rank 1 (min perturbation)")
+            r1_results = self._run_condition(spec_r1, f"phase3_{least_name}_r1", seeds)
+            r1_accs = [r["best_test_acc"] for r in r1_results]
+            r1_mean = float(np.mean(r1_accs))
+
+            phase3_winner = 0 if r0_mean > r1_mean else 1
+            allocation[least_shape] = phase3_winner
+
+            print(f"\n  Rank 0 mean: {r0_mean:.4f} ± {float(np.std(r0_accs)):.4f}")
+            print(f"  Rank 1 mean: {r1_mean:.4f} ± {float(np.std(r1_accs)):.4f}")
+            print(f"  Phase 3 decision: {least_name} -> rank {phase3_winner}")
+            if phase3_winner == 0:
+                print(f"  Freezing justified — rank 0 strictly outperforms rank 1")
+            else:
+                print(f"  Freezing rejected — rank 1 retained as safe minimum")
 
         # Build named allocation and ordering
         shape_to_name = dict(zip(self.shapes_list, self.names_list))
