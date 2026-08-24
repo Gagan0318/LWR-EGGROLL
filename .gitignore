@@ -8,3 +8,5 @@ data/
 notebooks/.ipynb_checkpoints/
 *.log
 src/
+*.Zone.Identifier
+*:Zone.Identifier
