@@ -222,7 +222,7 @@ def main():
         }
 
         print(f"\n  {ds} RESULT:")
-        print(f"    Phase 2-only (8,4,0):     {p2_mean:.4f} ± {p2_std:.4f}  (budget={sum(PHASE2_ONLY.values())})")
+        print(f"    Phase 2-only (4,2,0):     {p2_mean:.4f} ± {p2_std:.4f}  (budget={sum(PHASE2_ONLY.values())})")
         print(f"    Phase 1-informed ({informed_label}): {p1_mean:.4f} ± {p1_std:.4f}  (budget={informed_budget})")
         print(f"    Difference: {diff:+.4f}  →  {winner}")
 

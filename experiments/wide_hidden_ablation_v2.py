@@ -189,8 +189,64 @@ def main():
             "per_seed": ablated_accs,
             "degradation_from_baseline": degradation,
         }
+        # --- COMPARISON: LWR-EGGROLL with pilot-derived allocation ---
+    # Baseline (uniform r=4) = vanilla EGGROLL r=4 (verified identical)
+    # Sensitivity ordering: input > hidden > output → allocations (8,4,0) and (4,2,0)
 
-    # --- Summary ---
+    lwr_allocations = {
+        "8_4_0": {
+            INPUT_SHAPE: 8,
+            HIDDEN_SHAPE: 4,
+            OUTPUT_SHAPE: 0,
+        },
+        "4_2_0": {
+            INPUT_SHAPE: 4,
+            HIDDEN_SHAPE: 2,
+            OUTPUT_SHAPE: 0,
+        },
+    }
+
+    for alloc_label, alloc_spec in lwr_allocations.items():
+        print(f"\n--- LWR-EGGROLL ({alloc_label.replace('_',',')}) ---")
+        lwr_accs = []
+        for seed in SEEDS:
+            print(f"  LWR ({alloc_label}) seed={seed}...")
+            t0 = time.time()
+            result = train_with_rank_spec(
+                seed, X_train, y_train, X_test, y_test,
+                rank_spec=alloc_spec,
+                label=f"lwr_{alloc_label}_seed{seed}",
+            )
+            elapsed = time.time() - t0
+            acc = result["best_test_acc"]
+            lwr_accs.append(acc)
+            print(f"    acc={acc:.4f}  ({elapsed:.1f}s)")
+
+            run_data = {
+                "label": f"lwr_{alloc_label}",
+                "seed": seed,
+                "best_test_acc": acc,
+                "wall_seconds": elapsed,
+                "rank_spec": {str(k): v for k, v in alloc_spec.items()},
+            }
+            fname = RESULTS_DIR / f"lwr_{alloc_label}_seed{seed}.json"
+            with open(fname, "w") as f:
+                json.dump(run_data, f, indent=2)
+
+        lwr_mean = float(np.mean(lwr_accs))
+        lwr_std = float(np.std(lwr_accs))
+        delta = lwr_mean - baseline_mean
+        print(f"  LWR ({alloc_label}) mean: {lwr_mean:.4f} ± {lwr_std:.4f}")
+        print(f"  vs baseline (uniform r=4): {delta:+.4f}pp")
+
+        all_results[f"lwr_{alloc_label}"] = {
+            "mean": lwr_mean,
+            "std": lwr_std,
+            "per_seed": lwr_accs,
+            "delta_vs_baseline": delta,
+        }
+
+        # --- Summary ---
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
@@ -217,13 +273,16 @@ def main():
         reverse=True,
     )
     print(f"Sensitivity ordering: {' > '.join(ordering)}")
-    print()
-    if ordering[0] == "input":
-        print("RESULT: Input layer is most sensitive despite hidden having more parameters.")
-        print("        Sensitivity reflects functional position, not parameter count.")
-    elif ordering[0] == "hidden":
-        print("RESULT: Hidden layer is most sensitive — parameter count may be a confound.")
-        print("        Further investigation needed.")
+
+    print("\n--- LWR-EGGROLL vs Vanilla EGGROLL r=4 ---")
+    print(f"{'Allocation':<15} {'Accuracy':<18} {'Delta vs r=4':<12}")
+    print("-" * 45)
+    print(f"{'uniform r=4':<15} {all_results['baseline']['mean']:.4f}±{all_results['baseline']['std']:.4f}    {'---':<12}")
+    for alloc_label in lwr_allocations:
+        key = f"lwr_{alloc_label}"
+        r = all_results[key]
+        print(f"LWR ({alloc_label.replace('_',',')})   {r['mean']:.4f}±{r['std']:.4f}    {r['delta_vs_baseline']:+.4f}pp")
+
     print("=" * 60)
 
     # Save summary

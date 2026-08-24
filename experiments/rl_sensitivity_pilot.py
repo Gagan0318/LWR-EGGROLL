@@ -1,8 +1,17 @@
 """RL Sensitivity Pilot — derives LWR allocation for RL architectures.
 
-Runs Phase 2 (causal ablation) + Phase 3 (binary inclusion) using
-the standalone ES loop. Phase 2 is the primary ordering mechanism.
-Phase 1 (elevation) is skipped for speed — Phase 2 is sufficient.
+Runs all three phases using the standalone ES loop:
+  Phase 1: Elevation — measures per-layer perturbation magnitude
+           (shared-checkpoint, one-gen variance measurement).
+  Phase 2: Causal ablation — drops each layer to r=1, measures degradation.
+           Primary ordering mechanism.
+  Phase 3: Binary inclusion — tests rank 0 vs rank 1 for least sensitive.
+
+Phase 1 magnitudes cross-reference with Phase 2 ordering to assign rank 2
+to middle-ranked layers with low perturbation magnitude (budget-saving).
+
+For stochastic RL environments, rank set is {1, 2, 4} (rank 0 excluded
+a priori due to noisy fitness signal — Phase 3 still runs but floor is r=1).
 
 Usage:
     from rl_sensitivity_pilot import run_rl_pilot
@@ -14,7 +23,7 @@ Usage:
         env_name="CartPole-v1",
         ...
     )
-    # allocation = {(64, 4): 8, (64, 64): 2, (2, 64): 0}
+    # allocation = {(64, 4): 4, (64, 64): 2, (2, 64): 1}
 """
 import time
 from multiprocessing import Pool
@@ -50,10 +59,16 @@ def run_rl_pilot(
 ) -> Dict[Tuple[int, int], int]:
     """Run sensitivity pilot for an RL architecture.
 
+    Phase 1: Elevation — per-layer fitness variance from shared checkpoint.
     Phase 2: Causal ablation — drop each layer from baseline_rank to 1.
     Phase 3: Binary inclusion — test rank 0 vs 1 for least sensitive.
 
-    Returns: {shape: rank} allocation dict.
+    Phase 1 magnitudes are cross-referenced with Phase 2 ordering:
+    middle-ranked layers with low Phase 1 magnitude get rank 2 instead
+    of rank 4 (budget-saving). This makes the full rank set {1, 2, 4}
+    actively used for stochastic RL environments.
+
+    Returns: (shape_allocation, named_allocation, ordering, recommendation)
     """
     names = list(layer_shapes.keys())
     shapes = list(layer_shapes.values())
@@ -118,6 +133,35 @@ def run_rl_pilot(
 
         final_mean = float(np.mean(history[-10:])) if len(history) >= 10 else float(np.mean(history))
         return final_mean
+
+    # ── Phase 1: Shared-checkpoint Elevation ─────────────────
+    # Run a short baseline, then measure fitness variance per layer
+    # with that layer elevated to max_rank and others at r=1.
+    # This gives us the magnitude signal for Phase 1 × Phase 2
+    # cross-referencing (low magnitude middle layers get rank 2
+    # instead of rank 4, saving rank budget).
+    print("\n--- Phase 1: Elevation (fitness variance) ---")
+    print(f"  Elevation rank: {max_rank}, Background: r=1", flush=True)
+
+    phase1_magnitudes = {}
+    for name, shape in zip(names, shapes):
+        elevation_spec = {s: 1 for s in shapes}
+        elevation_spec[shape] = min(max_rank, min(shape))  # cap at layer dims
+
+        elevation_means = []
+        print(f"\n  Elevating {name} {shape} to r={elevation_spec[shape]}:")
+        for seed in seeds:
+            print(f"    seed={seed}...", end="", flush=True)
+            m = run_es_short(seed, elevation_spec, f"phase1_elevate_{name}")
+            elevation_means.append(m)
+            print(f" mean_fitness={m:.1f}")
+
+        phase1_magnitudes[name] = float(np.var(elevation_means))
+        print(f"  {name}: variance = {phase1_magnitudes[name]:.4f}")
+
+    p1_ordering = sorted(phase1_magnitudes.keys(),
+                         key=lambda n: phase1_magnitudes[n], reverse=True)
+    print(f"\n  Phase 1 ordering: {' > '.join(p1_ordering)}")
 
     # ── Phase 2: Causal Ablation ──────────────────────────────
     print("\n--- Phase 2: Causal Ablation ---")
@@ -206,6 +250,7 @@ def run_rl_pilot(
         baseline_rank=baseline_rank,
         max_rank=max_rank,
         verbose=True,
+        phase1_magnitudes=phase1_magnitudes,
     )
 
     # Build shape-keyed allocation for HyperscaleES

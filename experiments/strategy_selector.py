@@ -63,30 +63,69 @@ def _assign_lwr_ranks(
     ordering: List[str],
     degradation_scores: Dict[str, float],
     max_rank: int = 8,
+    phase1_magnitudes: Optional[Dict[str, float]] = None,
 ) -> Dict[str, int]:
     """Assign graded ranks based on sensitivity ordering.
 
-    Rules:
-      - Layers with negative degradation get rank 0
-        (removing rank helped — actively harmful signal).
-      - Remaining layers get descending ranks from RANK_SET.
-      - Most sensitive gets max_rank.
+    Rules (using rank set steps, not hardcoded values):
+      - Most sensitive layer → available_ranks[0] (= max_rank).
+      - Middle layers (default) → available_ranks[1] (one step below).
+      - Middle layers (low Phase 1 magnitude) → available_ranks[2]
+        (one additional step down — budget-saving downgrade).
+        Phase 1 can only downgrade, never upgrade.
+      - Least sensitive layer → rank 1 (Phase 3 candidate for 0).
+        Rank 0 only via explicit Phase 3 confirmation (degradation
+        hacked to < -900 by the pilot when Phase 3 confirms).
+
+    Examples:
+      Supervised (max_rank=8): available = [8, 4, 2, 1]
+        → most=8, mid=4, mid(low P1)=2, least=Phase 3
+      Stochastic RL (max_rank=4): available = [4, 2, 1]
+        → most=4, mid=2, mid(low P1)=1, least=1
     """
+    n = len(ordering)
+    if n == 0:
+        return {}
+
+    # Build available non-zero ranks from rank set, descending
     available = sorted([r for r in RANK_SET if 0 < r <= max_rank], reverse=True)
+    # e.g. supervised: [8, 4, 2, 1], RL: [4, 2, 1]
+
+    default_mid = available[1] if len(available) > 1 else available[0]
+    low_p1_mid = available[2] if len(available) > 2 else available[-1]
+
+    # Compute Phase 1 median if available
+    if phase1_magnitudes:
+        p1_vals = list(phase1_magnitudes.values())
+        p1_median = float(np.median(p1_vals))
+    else:
+        p1_median = None
+
     allocation = {}
-    rank_idx = 0
-    for name in ordering:
-        if degradation_scores.get(name, 0.0) < -900:
-            # Rank 0 only assigned via explicit Phase 3 confirmation
-            # (degradation hacked to < -900 by rl_sensitivity_pilot when
-            # Phase 3 confirms rank 0). Raw negative degradation alone
-            # is insufficient — the layer may still benefit from rank 1.
+    for i, name in enumerate(ordering):
+        deg = degradation_scores.get(name, 0.0)
+
+        if deg < -900:
+            # Phase 3 confirmed rank 0
             allocation[name] = 0
-        elif rank_idx < len(available):
-            allocation[name] = available[rank_idx]
-            rank_idx += 1
+            continue
+
+        if i == 0:
+            # Most sensitive → top of rank set
+            allocation[name] = available[0]
+        elif i < n - 1:
+            # Middle layer(s): default to one step below max.
+            # Low Phase 1 magnitude → one more step down (budget-saving).
+            # High/moderate Phase 1 → keep default. Phase 1 never upgrades.
+            if phase1_magnitudes and p1_median is not None:
+                p1_mag = phase1_magnitudes.get(name, p1_median)
+                allocation[name] = low_p1_mid if p1_mag < p1_median else default_mid
+            else:
+                allocation[name] = default_mid
         else:
-            allocation[name] = 1  # fallback minimum
+            # Least sensitive → safe default; Phase 3 overrides to 0 or 1
+            allocation[name] = 1
+
     return allocation
 
 
@@ -136,6 +175,13 @@ def select_strategy(
             r.layer_name: r.shape for r in pilot_result.phase2_results
         }
 
+    # Extract Phase 1 magnitudes if available
+    phase1_magnitudes = None
+    if hasattr(pilot_result, 'phase1_results') and pilot_result.phase1_results:
+        phase1_magnitudes = {
+            r.layer_name: r.mean for r in pilot_result.phase1_results
+        }
+
     return _decide(
         degradation_scores=degradation_scores,
         ordering=ordering,
@@ -143,6 +189,7 @@ def select_strategy(
         baseline_rank=baseline_rank,
         max_rank=max_rank,
         verbose=verbose,
+        phase1_magnitudes=phase1_magnitudes,
     )
 
 
@@ -152,6 +199,7 @@ def select_strategy_from_dict(
     baseline_rank: int = 4,
     max_rank: int = 8,
     verbose: bool = True,
+    phase1_magnitudes: Optional[Dict[str, float]] = None,
 ) -> StrategyRecommendation:
     """Classify from raw degradation scores.
 
@@ -168,6 +216,10 @@ def select_strategy_from_dict(
         Maximum rank for LWR graded allocation.
     verbose : bool
         Print summary.
+    phase1_magnitudes : dict, optional
+        {layer_name: mean_phase1_metric} for Phase 1 cross-referencing.
+        If provided, middle-ranked layers with below-median Phase 1
+        magnitude are downgraded from rank 4 to rank 2.
     """
     # Derive ordering from degradation (most sensitive = highest degradation)
     ordering = sorted(degradation_scores.keys(),
@@ -183,6 +235,7 @@ def select_strategy_from_dict(
         baseline_rank=baseline_rank,
         max_rank=max_rank,
         verbose=verbose,
+        phase1_magnitudes=phase1_magnitudes,
     )
 
 
@@ -193,6 +246,7 @@ def _decide(
     baseline_rank: int,
     max_rank: int,
     verbose: bool,
+    phase1_magnitudes: Optional[Dict[str, float]] = None,
 ) -> StrategyRecommendation:
     """Core decision logic."""
     values = np.array(list(degradation_scores.values()))
@@ -217,7 +271,9 @@ def _decide(
     elif cv > CV_HIGH_CONFIDENCE:
         strategy = "lwr"
         confidence = "high"
-        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores, max_rank=max_rank)
+        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores,
+                                       max_rank=max_rank,
+                                       phase1_magnitudes=phase1_magnitudes)
         most = ordering[0]
         least = ordering[-1]
         finding = (
@@ -230,7 +286,9 @@ def _decide(
     elif cv > CV_THRESHOLD:
         strategy = "lwr"
         confidence = "moderate"
-        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores, max_rank=max_rank)
+        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores,
+                                       max_rank=max_rank,
+                                       phase1_magnitudes=phase1_magnitudes)
         most = ordering[0]
         least = ordering[-1]
         finding = (
@@ -243,7 +301,9 @@ def _decide(
     else:
         strategy = "heterogeneous"
         confidence = "moderate" if cv > CV_THRESHOLD * 0.5 else "high"
-        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores, max_rank=max_rank)
+        rank_alloc = _assign_lwr_ranks(ordering, degradation_scores,
+                                       max_rank=max_rank,
+                                       phase1_magnitudes=phase1_magnitudes)
         finding = (
             f"Low sensitivity gap (CV={cv:.2f}, spread={spread:.4f}). "
             f"Ordering is indistinguishable from noise — any mixed "
@@ -281,8 +341,8 @@ def _decide(
 if __name__ == "__main__":
     print("Validating strategy selector against known results\n")
 
-    # ── MNIST: input >> hidden >> output, strong gap ──
-    print("--- MNIST ---")
+    # ── MNIST without Phase 1: fallback to rank 4 for middle ──
+    print("--- MNIST (no Phase 1 data) ---")
     rec = select_strategy_from_dict(
         {"input": 0.0412, "hidden": 0.0089, "output": -0.0156},
         layer_shapes={
@@ -291,8 +351,39 @@ if __name__ == "__main__":
     )
     assert rec.strategy == "lwr"
     assert rec.rank_allocation["input"] == 8
-    assert rec.rank_allocation["output"] == 0
+    assert rec.rank_allocation["hidden"] == 4   # no Phase 1 → default rank 4
+    assert rec.rank_allocation["output"] == 1   # least sensitive → safe default
+    print(f"  Allocation: {rec.rank_allocation}")
     print(f"  Shape-keyed: {rec.rank_allocation_shapes}\n")
+
+    # ── MNIST with Phase 1: hidden has LOW magnitude → rank 2 ──
+    print("--- MNIST (with Phase 1 — hidden low magnitude) ---")
+    rec = select_strategy_from_dict(
+        {"input": 0.0412, "hidden": 0.0089, "output": -0.0156},
+        layer_shapes={
+            "input": (256, 784), "hidden": (256, 256), "output": (10, 256)
+        },
+        phase1_magnitudes={"input": 0.42, "hidden": 0.19, "output": 0.31},
+        # hidden (0.19) < median (0.31) → rank 2
+    )
+    assert rec.strategy == "lwr"
+    assert rec.rank_allocation["input"] == 8
+    assert rec.rank_allocation["hidden"] == 2   # low Phase 1 → budget-saving
+    assert rec.rank_allocation["output"] == 1   # least sensitive
+    print(f"  Allocation: {rec.rank_allocation}")
+    print(f"  Budget: {rec.total_budget} (vs 13 without Phase 1 cross-ref)\n")
+
+    # ── MNIST with Phase 1: hidden has HIGH magnitude → rank 4 ──
+    print("--- MNIST (with Phase 1 — hidden high magnitude) ---")
+    rec = select_strategy_from_dict(
+        {"input": 0.0412, "hidden": 0.0089, "output": -0.0156},
+        phase1_magnitudes={"input": 0.42, "hidden": 0.38, "output": 0.19},
+        # hidden (0.38) > median (0.38) → rank 4
+    )
+    assert rec.strategy == "lwr"
+    assert rec.rank_allocation["input"] == 8
+    assert rec.rank_allocation["hidden"] == 4   # high Phase 1 → keep rank 4
+    print(f"  Allocation: {rec.rank_allocation}\n")
 
     # ── Fashion-MNIST: same pattern ──
     print("--- Fashion-MNIST ---")
@@ -309,7 +400,6 @@ if __name__ == "__main__":
         {"input": 0.008, "hidden": 0.005, "output": 0.003},
     )
     assert rec.strategy == "heterogeneous"
-    # Heterogeneous: any mixed allocation, ordering irrelevant
     print()
 
     # ── Edge: all zeros ──

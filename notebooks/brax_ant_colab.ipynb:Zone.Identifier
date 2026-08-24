@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://claude.ai/chat/88875f80-a1eb-49a3-9373-d2bd8357fe43
+HostUrl=https://claude.ai/api/organizations/ca651d6f-6cea-4bf2-999c-ee6d28276c28/conversations/88875f80-a1eb-49a3-9373-d2bd8357fe43/wiggle/download-file?path=%2Fmnt%2Fuser-data%2Foutputs%2Fbrax_ant_colab.ipynb

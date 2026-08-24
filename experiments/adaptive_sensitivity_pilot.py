@@ -427,70 +427,64 @@ class AdaptiveSensitivityPilot:
         """Derive rank allocation from pilot results.
 
         In ALLOCATION mode:
-            - Rank layers by Phase 1 sensitivity (descending).
-            - Assign ranks from {0, 1, 2, 4, 8} proportional to position.
-            - For the least sensitive layer: check Phase 2 causal ablation.
-              If degradation <= 0 (negative causal effect), assign r=0.
+            - Order layers by Phase 2 degradation (primary ordering).
+            - Most sensitive → available_ranks[0] (= max_rank).
+            - Middle (default) → available_ranks[1] (one step below).
+            - Middle (low Phase 1) → available_ranks[2] (one more step
+              down — budget-saving). Phase 1 can only downgrade.
+            - Least sensitive → rank 1 (Phase 3 candidate for 0).
 
         In BINARY INCLUSION mode:
-            - For each layer: check Phase 2 degradation.
-              If degradation > 0 (freezing hurts), assign r=1 (include).
-              If degradation <= 0 (freezing helps or is neutral), assign r=0 (exclude).
+            - Phase 2 only: degradation > 0 → r=1, else r=0.
         """
-        # Build Phase 2 lookup
         p2_by_shape = {r.shape: r for r in phase2_results}
 
         if self.mode == "binary_inclusion":
-            # Binary decision: include (r=1) or exclude (r=0)
-            # Uses Phase 2 only — Phase 1 is skipped in binary mode
             allocation = {}
             for p2 in phase2_results:
-                if p2.mean > 0:
-                    # Freezing this layer hurts accuracy → keep it
-                    allocation[p2.shape] = 1
-                else:
-                    # Freezing this layer is neutral or helps → exclude it
-                    allocation[p2.shape] = 0
+                allocation[p2.shape] = 1 if p2.mean > 0 else 0
             return allocation
 
-        else:
-            # Allocation mode: rank layers by Phase 2 degradation (primary)
-            sorted_by_sensitivity = sorted(
-                phase2_results, key=lambda x: x.mean, reverse=True
-            )
-            n_layers = len(sorted_by_sensitivity)
+        # Allocation mode
+        sorted_by_sensitivity = sorted(
+            phase2_results, key=lambda x: x.mean, reverse=True
+        )
+        n_layers = len(sorted_by_sensitivity)
 
-            # Available non-zero ranks, descending
-            available_ranks = sorted(
-                [r for r in FULL_RANK_SET if 0 < r <= self.max_rank], reverse=True
-            )
+        # Build available non-zero ranks from rank set, descending
+        available = sorted(
+            [r for r in FULL_RANK_SET if 0 < r <= self.max_rank], reverse=True
+        )
+        default_mid = available[1] if len(available) > 1 else available[0]
+        low_p1_mid = available[2] if len(available) > 2 else available[-1]
 
-            allocation = {}
-            for i, layer_result in enumerate(sorted_by_sensitivity):
-                shape = layer_result.shape
-                max_for_layer = self.per_layer_max_rank[shape]
-                p2 = p2_by_shape[shape]
+        # Build Phase 1 magnitude lookup and compute median
+        p1_by_shape = {r.shape: r.mean for r in phase1_results}
+        p1_values = [r.mean for r in phase1_results] if phase1_results else []
+        p1_median = float(np.median(p1_values)) if p1_values else 0.0
 
-                if i == n_layers - 1:
-                    # Least sensitive layer: Phase 3 head-to-head
-                    # (rank 0 vs rank 1, run externally or flagged for
-                    # manual validation). Default to rank 1 unless
-                    # Phase 3 confirms rank 0 is strictly better.
-                    # Note: automated Phase 3 runs are performed as
-                    # dedicated experiments; the pilot flags the
-                    # candidate layer and defaults to the safe choice.
-                    allocation[shape] = 1  # safe default; Phase 3 overrides
+        allocation = {}
+        for i, layer_result in enumerate(sorted_by_sensitivity):
+            shape = layer_result.shape
+            max_for_layer = self.per_layer_max_rank[shape]
+
+            if i == 0:
+                # Most sensitive → top of rank set
+                allocation[shape] = min(available[0], max_for_layer)
+            elif i < n_layers - 1:
+                # Middle layer(s): default one step below max.
+                # Low Phase 1 → one more step down. Phase 1 never upgrades.
+                p1_mag = p1_by_shape.get(shape, p1_median)
+                if p1_values and p1_mag < p1_median:
+                    candidate = low_p1_mid
                 else:
-                    # Proportional assignment based on sensitivity position
-                    # Most sensitive → highest available, etc.
-                    if i < len(available_ranks):
-                        candidate = available_ranks[i]
-                    else:
-                        candidate = 1
-                    # Cap at layer's max usable rank
-                    allocation[shape] = min(candidate, max_for_layer)
+                    candidate = default_mid
+                allocation[shape] = min(candidate, max_for_layer)
+            else:
+                # Least sensitive → Phase 3 candidate (safe default: rank 1)
+                allocation[shape] = 1
 
-            return allocation
+        return allocation
 
     # ── Main entry point ────────────────────────────────────────────
 
