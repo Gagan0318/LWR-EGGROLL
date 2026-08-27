@@ -1,0 +1,213 @@
+{
+  "method": "openai_es",
+  "seed": 1,
+  "best_fitness": 280.0431250060421,
+  "final_mean_fitness": 207.8068439876175,
+  "generations": 29,
+  "wall_seconds": 165.04102325439453,
+  "history": [
+    {
+      "gen": 0,
+      "mean_fitness": -465.1859108080871,
+      "best_fitness": -165.46446858397246,
+      "best_so_far": -165.46446858397246,
+      "fitness_variance": 11785.320399921813
+    },
+    {
+      "gen": 1,
+      "mean_fitness": -281.91743828964053,
+      "best_fitness": -13.55791891213288,
+      "best_so_far": -13.55791891213288,
+      "fitness_variance": 14062.19116579622
+    },
+    {
+      "gen": 2,
+      "mean_fitness": -181.88781931841604,
+      "best_fitness": 28.915215666507912,
+      "best_so_far": 28.915215666507912,
+      "fitness_variance": 6796.884534885532
+    },
+    {
+      "gen": 3,
+      "mean_fitness": -138.82994538166864,
+      "best_fitness": 81.18853668221408,
+      "best_so_far": 81.18853668221408,
+      "fitness_variance": 4142.0226902243
+    },
+    {
+      "gen": 4,
+      "mean_fitness": -103.4330472535864,
+      "best_fitness": 40.67278954339087,
+      "best_so_far": 81.18853668221408,
+      "fitness_variance": 2092.1002564937216
+    },
+    {
+      "gen": 5,
+      "mean_fitness": -90.66402878396704,
+      "best_fitness": 48.961690064809545,
+      "best_so_far": 81.18853668221408,
+      "fitness_variance": 2148.9105855824864
+    },
+    {
+      "gen": 6,
+      "mean_fitness": -70.72101735876524,
+      "best_fitness": 91.52199072975034,
+      "best_so_far": 91.52199072975034,
+      "fitness_variance": 2113.687979265863
+    },
+    {
+      "gen": 7,
+      "mean_fitness": -51.819668565426156,
+      "best_fitness": 107.78480371261222,
+      "best_so_far": 107.78480371261222,
+      "fitness_variance": 2553.0091255717116
+    },
+    {
+      "gen": 8,
+      "mean_fitness": -41.693652527448194,
+      "best_fitness": 89.074723822784,
+      "best_so_far": 107.78480371261222,
+      "fitness_variance": 2295.1232381718833
+    },
+    {
+      "gen": 9,
+      "mean_fitness": -23.578619298149622,
+      "best_fitness": 177.47293816923832,
+      "best_so_far": 177.47293816923832,
+      "fitness_variance": 2518.367931325595
+    },
+    {
+      "gen": 10,
+      "mean_fitness": -7.046015543028505,
+      "best_fitness": 153.6183073541502,
+      "best_so_far": 177.47293816923832,
+      "fitness_variance": 2497.349744416143
+    },
+    {
+      "gen": 11,
+      "mean_fitness": 6.489280393379352,
+      "best_fitness": 185.1240168462597,
+      "best_so_far": 185.1240168462597,
+      "fitness_variance": 2987.2449479065253
+    },
+    {
+      "gen": 12,
+      "mean_fitness": 28.908729489935403,
+      "best_fitness": 207.06170190069372,
+      "best_so_far": 207.06170190069372,
+      "fitness_variance": 3652.5816729019834
+    },
+    {
+      "gen": 13,
+      "mean_fitness": 46.93187122546543,
+      "best_fitness": 212.87193812898198,
+      "best_so_far": 212.87193812898198,
+      "fitness_variance": 3756.6181096182
+    },
+    {
+      "gen": 14,
+      "mean_fitness": 53.411775553528855,
+      "best_fitness": 268.0539287964697,
+      "best_so_far": 268.0539287964697,
+      "fitness_variance": 4664.673259004157
+    },
+    {
+      "gen": 15,
+      "mean_fitness": 75.50725243521606,
+      "best_fitness": 261.2253671849901,
+      "best_so_far": 268.0539287964697,
+      "fitness_variance": 5774.814731516505
+    },
+    {
+      "gen": 16,
+      "mean_fitness": 77.70132590972801,
+      "best_fitness": 258.0212812174001,
+      "best_so_far": 268.0539287964697,
+      "fitness_variance": 4882.911508914291
+    },
+    {
+      "gen": 17,
+      "mean_fitness": 92.87580232920209,
+      "best_fitness": 258.9557732778667,
+      "best_so_far": 268.0539287964697,
+      "fitness_variance": 5532.459564116316
+    },
+    {
+      "gen": 18,
+      "mean_fitness": 114.01213930865495,
+      "best_fitness": 264.7172235268519,
+      "best_so_far": 268.0539287964697,
+      "fitness_variance": 5287.30628133354
+    },
+    {
+      "gen": 19,
+      "mean_fitness": 113.8350980430009,
+      "best_fitness": 273.7506462109818,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 5463.616451733624
+    },
+    {
+      "gen": 20,
+      "mean_fitness": 127.8188121330143,
+      "best_fitness": 269.34135083001286,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 5923.941873366443
+    },
+    {
+      "gen": 21,
+      "mean_fitness": 139.72781071654921,
+      "best_fitness": 264.9735138340944,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 5360.423735548882
+    },
+    {
+      "gen": 22,
+      "mean_fitness": 154.749521564874,
+      "best_fitness": 267.53792412865823,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 4771.544929297523
+    },
+    {
+      "gen": 23,
+      "mean_fitness": 165.9722271941655,
+      "best_fitness": 265.73482919893,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 4078.2865405396833
+    },
+    {
+      "gen": 24,
+      "mean_fitness": 175.1669914629615,
+      "best_fitness": 273.6046349525012,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 3627.9730461675326
+    },
+    {
+      "gen": 25,
+      "mean_fitness": 186.3543104048867,
+      "best_fitness": 266.81593345171297,
+      "best_so_far": 273.7506462109818,
+      "fitness_variance": 3308.3939444086095
+    },
+    {
+      "gen": 26,
+      "mean_fitness": 179.16174274665292,
+      "best_fitness": 274.2881993057541,
+      "best_so_far": 274.2881993057541,
+      "fitness_variance": 3985.0814166561695
+    },
+    {
+      "gen": 27,
+      "mean_fitness": 190.47523043369458,
+      "best_fitness": 279.64658955804794,
+      "best_so_far": 279.64658955804794,
+      "fitness_variance": 4167.677141443592
+    },
+    {
+      "gen": 28,
+      "mean_fitness": 207.8068439876175,
+      "best_fitness": 280.0431250060421,
+      "best_so_far": 280.0431250060421,
+      "fitness_variance": 2211.6505864464325
+    }
+  ]
+}

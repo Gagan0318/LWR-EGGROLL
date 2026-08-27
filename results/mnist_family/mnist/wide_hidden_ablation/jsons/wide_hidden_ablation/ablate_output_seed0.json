@@ -1,0 +1,16 @@
+{
+  "label": "ablate_output",
+  "seed": 0,
+  "best_test_acc": 0.8622999787330627,
+  "wall_seconds": 306.88232588768005,
+  "rank_spec": {
+    "(128, 784)": 4,
+    "(1024, 128)": 4,
+    "(10, 1024)": 1
+  },
+  "ablated_layer": "output",
+  "ablated_shape": [
+    10,
+    1024
+  ]
+}

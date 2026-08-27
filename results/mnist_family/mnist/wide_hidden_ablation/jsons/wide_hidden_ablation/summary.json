@@ -1,0 +1,75 @@
+{
+  "experiment": "wide_hidden_causal_ablation",
+  "architecture": [
+    784,
+    128,
+    1024,
+    10
+  ],
+  "hidden_dims": [
+    128,
+    1024
+  ],
+  "baseline_rank": 4,
+  "ablated_rank": 1,
+  "sigma": 0.05,
+  "population": 2048,
+  "wall_seconds": 300.0,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "dataset": "MNIST",
+  "results": {
+    "baseline": {
+      "mean": 0.8542666633923849,
+      "std": 0.003332005650920618,
+      "per_seed": [
+        0.8578000068664551,
+        0.8551999926567078,
+        0.8497999906539917
+      ]
+    },
+    "input": {
+      "mean": 0.8599999944368998,
+      "std": 0.0020050024366677736,
+      "per_seed": [
+        0.8621000051498413,
+        0.8605999946594238,
+        0.8572999835014343
+      ],
+      "degradation_from_baseline": -0.0057333310445149
+    },
+    "hidden": {
+      "mean": 0.8579666415850321,
+      "std": 0.00306523177332904,
+      "per_seed": [
+        0.8586999773979187,
+        0.861299991607666,
+        0.8538999557495117
+      ],
+      "degradation_from_baseline": -0.003699978192647224
+    },
+    "output": {
+      "mean": 0.8544333179791769,
+      "std": 0.007917214828795354,
+      "per_seed": [
+        0.8622999787330627,
+        0.8435999751091003,
+        0.8574000000953674
+      ],
+      "degradation_from_baseline": -0.0001666545867919922
+    }
+  },
+  "sensitivity_ordering": [
+    "output",
+    "hidden",
+    "input"
+  ],
+  "param_counts": {
+    "input": 100352,
+    "hidden": 131072,
+    "output": 10240
+  }
+}

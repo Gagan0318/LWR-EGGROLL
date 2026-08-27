@@ -1,0 +1,210 @@
+{
+  "MNIST": {
+    "dataset": "MNIST",
+    "wall_seconds": 113.6461877822876,
+    "layers": [
+      {
+        "name": "input",
+        "shape": [
+          256,
+          784
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          3.8015546798706055,
+          3.870255470275879,
+          4.587592124938965
+        ],
+        "mean": 4.086467425028483,
+        "std": 0.35545691093375875
+      },
+      {
+        "name": "hidden",
+        "shape": [
+          256,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          2.754822254180908,
+          3.377634048461914,
+          3.0983710289001465
+        ],
+        "mean": 3.0769424438476562,
+        "std": 0.25471293772519077
+      },
+      {
+        "name": "output",
+        "shape": [
+          10,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          3.5628795623779297,
+          3.4399280548095703,
+          3.925478219985962
+        ],
+        "mean": 3.6427619457244873,
+        "std": 0.20611588504617182
+      }
+    ],
+    "ordering": "input > output > hidden"
+  },
+  "Fashion-MNIST": {
+    "dataset": "Fashion-MNIST",
+    "wall_seconds": 86.61318254470825,
+    "layers": [
+      {
+        "name": "input",
+        "shape": [
+          256,
+          784
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          45.01071548461914,
+          6.090575218200684,
+          26.873096466064453
+        ],
+        "mean": 25.991462389628094,
+        "std": 15.901305786485423
+      },
+      {
+        "name": "hidden",
+        "shape": [
+          256,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          35.08755874633789,
+          6.6699395179748535,
+          23.627344131469727
+        ],
+        "mean": 21.794947465260822,
+        "std": 11.673574968243656
+      },
+      {
+        "name": "output",
+        "shape": [
+          10,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          45.088409423828125,
+          7.229072093963623,
+          26.253101348876953
+        ],
+        "mean": 26.19019428888957,
+        "std": 15.456073751932498
+      }
+    ],
+    "ordering": "output > input > hidden"
+  },
+  "KMNIST": {
+    "dataset": "KMNIST",
+    "wall_seconds": 88.11721301078796,
+    "layers": [
+      {
+        "name": "input",
+        "shape": [
+          256,
+          784
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          4.750565528869629,
+          1.3782286643981934,
+          4.3098931312561035
+        ],
+        "mean": 3.479562441507975,
+        "std": 1.4967188051693745
+      },
+      {
+        "name": "hidden",
+        "shape": [
+          256,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          3.476318597793579,
+          1.0365266799926758,
+          2.9723258018493652
+        ],
+        "mean": 2.4950570265452066,
+        "std": 1.0516606751393724
+      },
+      {
+        "name": "output",
+        "shape": [
+          10,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          3.2744741439819336,
+          1.2334535121917725,
+          2.942841053009033
+        ],
+        "mean": 2.4835895697275796,
+        "std": 0.8942875184638844
+      }
+    ],
+    "ordering": "input > hidden > output"
+  },
+  "EMNIST-Digits": {
+    "dataset": "EMNIST-Digits",
+    "wall_seconds": 90.13584780693054,
+    "layers": [
+      {
+        "name": "input",
+        "shape": [
+          256,
+          784
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          6.910740852355957,
+          3.048867702484131,
+          6.166739463806152
+        ],
+        "mean": 5.375449339548747,
+        "std": 1.6729457257555629
+      },
+      {
+        "name": "hidden",
+        "shape": [
+          256,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          5.8572845458984375,
+          3.1120758056640625,
+          4.7931342124938965
+        ],
+        "mean": 4.587498188018799,
+        "std": 1.130120166998844
+      },
+      {
+        "name": "output",
+        "shape": [
+          10,
+          256
+        ],
+        "metric": "fitness_variance_from_checkpoint",
+        "values": [
+          5.227383613586426,
+          2.701195240020752,
+          5.315770149230957
+        ],
+        "mean": 4.414783000946045,
+        "std": 1.2122266855434616
+      }
+    ],
+    "ordering": "input > hidden > output"
+  }
+}

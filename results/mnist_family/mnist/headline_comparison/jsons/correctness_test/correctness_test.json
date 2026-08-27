@@ -1,0 +1,64 @@
+{
+  "test": "correctness_comparison",
+  "description": "Seed-matched vanilla EGGROLL r=4 vs LWR-EGGROLL uniform r=4",
+  "architecture": [
+    784,
+    256,
+    256,
+    256,
+    10
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "all_bit_identical_int": true,
+  "all_bit_identical_dict": true,
+  "max_delta_int": 0.0,
+  "max_delta_dict": 0.0,
+  "per_seed": [
+    {
+      "seed": 0,
+      "vanilla_r4": 0.8292999863624573,
+      "lwr_int4": 0.8292999863624573,
+      "lwr_dict4": 0.8292999863624573,
+      "delta_vanilla_vs_lwr_int": 0.0,
+      "delta_vanilla_vs_lwr_dict": 0.0,
+      "delta_lwr_int_vs_lwr_dict": 0.0,
+      "bit_identical_int": true,
+      "bit_identical_dict": true,
+      "wall_s_vanilla": 125.9369945526123,
+      "wall_s_lwr_int": 109.8696985244751,
+      "wall_s_lwr_dict": 114.64370775222778
+    },
+    {
+      "seed": 1,
+      "vanilla_r4": 0.8366999626159668,
+      "lwr_int4": 0.8366999626159668,
+      "lwr_dict4": 0.8366999626159668,
+      "delta_vanilla_vs_lwr_int": 0.0,
+      "delta_vanilla_vs_lwr_dict": 0.0,
+      "delta_lwr_int_vs_lwr_dict": 0.0,
+      "bit_identical_int": true,
+      "bit_identical_dict": true,
+      "wall_s_vanilla": 144.4995560646057,
+      "wall_s_lwr_int": 144.5447108745575,
+      "wall_s_lwr_dict": 135.74574995040894
+    },
+    {
+      "seed": 2,
+      "vanilla_r4": 0.8328999876976013,
+      "lwr_int4": 0.8328999876976013,
+      "lwr_dict4": 0.8328999876976013,
+      "delta_vanilla_vs_lwr_int": 0.0,
+      "delta_vanilla_vs_lwr_dict": 0.0,
+      "delta_lwr_int_vs_lwr_dict": 0.0,
+      "bit_identical_int": true,
+      "bit_identical_dict": true,
+      "wall_s_vanilla": 137.68233680725098,
+      "wall_s_lwr_int": 139.9471824169159,
+      "wall_s_lwr_dict": 140.99994158744812
+    }
+  ]
+}

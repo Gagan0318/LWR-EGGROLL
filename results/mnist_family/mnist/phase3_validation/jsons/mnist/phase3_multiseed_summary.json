@@ -1,0 +1,66 @@
+{
+  "experiment": "phase3_multiseed_validation",
+  "architecture": [
+    784,
+    256,
+    256,
+    256,
+    10
+  ],
+  "target_layer": "output",
+  "target_shape": [
+    10,
+    256
+  ],
+  "frozen_fraction": 0.00766903203089098,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "gens": 50,
+  "pop": 256,
+  "sigma": 0.03,
+  "per_seed": {
+    "0": {
+      "rank_0_acc": 0.647599995136261,
+      "rank_1_acc": 0.4931999742984772,
+      "diff": 0.1544000208377838,
+      "recommends": "rank 0"
+    },
+    "1": {
+      "rank_0_acc": 0.6211999654769897,
+      "rank_1_acc": 0.5074999928474426,
+      "diff": 0.11369997262954712,
+      "recommends": "rank 0"
+    },
+    "2": {
+      "rank_0_acc": 0.5995000004768372,
+      "rank_1_acc": 0.5171999931335449,
+      "diff": 0.08230000734329224,
+      "recommends": "rank 0"
+    },
+    "3": {
+      "rank_0_acc": 0.6525999903678894,
+      "rank_1_acc": 0.5546000003814697,
+      "diff": 0.09799998998641968,
+      "recommends": "rank 0"
+    },
+    "4": {
+      "rank_0_acc": 0.6227999925613403,
+      "rank_1_acc": 0.5447999835014343,
+      "diff": 0.078000009059906,
+      "recommends": "rank 0"
+    }
+  },
+  "summary": {
+    "rank_0_mean": 0.6287399888038635,
+    "rank_0_std": 0.019349997095550266,
+    "rank_1_mean": 0.5234599888324738,
+    "rank_1_std": 0.02295505691273001,
+    "consistency": 1.0,
+    "verdict": "STABLE \u2014 rank 0 recommendation holds across all seeds. At 0.8% frozen fraction, the initialisation lottery does not affect the Phase 3 outcome."
+  }
+}

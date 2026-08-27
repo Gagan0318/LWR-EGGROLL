@@ -1,0 +1,23 @@
+{
+  "input_only": {
+    "acc_mean": 0.620039987564087,
+    "acc_std": 0.0022249525965400137,
+    "variance_mean": null,
+    "variance_std": null,
+    "n_seeds": 5
+  },
+  "hidden_only": {
+    "acc_mean": 0.5171799778938293,
+    "acc_std": 0.013831468180024809,
+    "variance_mean": null,
+    "variance_std": null,
+    "n_seeds": 5
+  },
+  "output_only": {
+    "acc_mean": 0.4730599820613861,
+    "acc_std": 0.004105410492154962,
+    "variance_mean": null,
+    "variance_std": null,
+    "n_seeds": 5
+  }
+}

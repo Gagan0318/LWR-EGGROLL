@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.bak
+*.log
+*.Zone.Identifier
+*:Zone.Identifier
+.ipynb_checkpoints/
+data/
+src/

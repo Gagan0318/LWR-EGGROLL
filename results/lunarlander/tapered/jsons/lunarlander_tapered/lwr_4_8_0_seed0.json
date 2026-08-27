@@ -1,0 +1,276 @@
+{
+  "method": "lwr_4_8_0",
+  "seed": 0,
+  "best_fitness": 287.5453269960876,
+  "final_mean_fitness": 202.05321653286154,
+  "generations": 38,
+  "wall_seconds": 214.56669974327087,
+  "history": [
+    {
+      "gen": 0,
+      "mean_fitness": -513.9135673573037,
+      "best_fitness": -100.63917370937023,
+      "best_so_far": -100.63917370937023,
+      "fitness_variance": 13746.966928180158
+    },
+    {
+      "gen": 1,
+      "mean_fitness": -326.89405601618665,
+      "best_fitness": -91.86150137403392,
+      "best_so_far": -91.86150137403392,
+      "fitness_variance": 16605.57506048504
+    },
+    {
+      "gen": 2,
+      "mean_fitness": -167.29780672903075,
+      "best_fitness": -80.95110815548337,
+      "best_so_far": -80.95110815548337,
+      "fitness_variance": 3907.829582543227
+    },
+    {
+      "gen": 3,
+      "mean_fitness": -160.94009973147533,
+      "best_fitness": -43.41580147457531,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 3270.8878585486523
+    },
+    {
+      "gen": 4,
+      "mean_fitness": -148.4033921943998,
+      "best_fitness": -70.70054212044764,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 1849.245561983078
+    },
+    {
+      "gen": 5,
+      "mean_fitness": -142.65973615903806,
+      "best_fitness": -51.903960663492214,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 947.1305323729857
+    },
+    {
+      "gen": 6,
+      "mean_fitness": -133.1560867400892,
+      "best_fitness": -79.4437293367659,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 462.81818737580375
+    },
+    {
+      "gen": 7,
+      "mean_fitness": -127.55103231102797,
+      "best_fitness": -49.54430003502331,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 382.6518912189505
+    },
+    {
+      "gen": 8,
+      "mean_fitness": -125.18237498275828,
+      "best_fitness": -77.77883382907274,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 208.37336822385657
+    },
+    {
+      "gen": 9,
+      "mean_fitness": -124.46506089926592,
+      "best_fitness": -61.15534312615506,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 205.12868854611602
+    },
+    {
+      "gen": 10,
+      "mean_fitness": -120.92240616319853,
+      "best_fitness": -59.286669479343274,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 256.33023695505454
+    },
+    {
+      "gen": 11,
+      "mean_fitness": -116.99286984117967,
+      "best_fitness": -65.35514745329863,
+      "best_so_far": -43.41580147457531,
+      "fitness_variance": 253.48991286117973
+    },
+    {
+      "gen": 12,
+      "mean_fitness": -108.99454285678905,
+      "best_fitness": -40.254475683702914,
+      "best_so_far": -40.254475683702914,
+      "fitness_variance": 370.7694822821236
+    },
+    {
+      "gen": 13,
+      "mean_fitness": -97.55370211832138,
+      "best_fitness": -21.731182785856742,
+      "best_so_far": -21.731182785856742,
+      "fitness_variance": 559.3244210797528
+    },
+    {
+      "gen": 14,
+      "mean_fitness": -79.38775212520116,
+      "best_fitness": 14.398360819115913,
+      "best_so_far": 14.398360819115913,
+      "fitness_variance": 611.7739205950644
+    },
+    {
+      "gen": 15,
+      "mean_fitness": -61.88994430321802,
+      "best_fitness": 40.02958499683706,
+      "best_so_far": 40.02958499683706,
+      "fitness_variance": 773.0559749711264
+    },
+    {
+      "gen": 16,
+      "mean_fitness": -45.49968962775881,
+      "best_fitness": 77.4485996842678,
+      "best_so_far": 77.4485996842678,
+      "fitness_variance": 1170.3414060484802
+    },
+    {
+      "gen": 17,
+      "mean_fitness": -36.18316575566959,
+      "best_fitness": 117.082351204052,
+      "best_so_far": 117.082351204052,
+      "fitness_variance": 1918.6809438071741
+    },
+    {
+      "gen": 18,
+      "mean_fitness": -37.777147110639106,
+      "best_fitness": 257.7598781773405,
+      "best_so_far": 257.7598781773405,
+      "fitness_variance": 3636.1131762372993
+    },
+    {
+      "gen": 19,
+      "mean_fitness": -36.1742512803511,
+      "best_fitness": 153.53098185998925,
+      "best_so_far": 257.7598781773405,
+      "fitness_variance": 3247.4787590436113
+    },
+    {
+      "gen": 20,
+      "mean_fitness": -37.92146430448021,
+      "best_fitness": 201.83255466821555,
+      "best_so_far": 257.7598781773405,
+      "fitness_variance": 4618.197898094724
+    },
+    {
+      "gen": 21,
+      "mean_fitness": -18.075037429566795,
+      "best_fitness": 214.61483906493012,
+      "best_so_far": 257.7598781773405,
+      "fitness_variance": 4715.468535505218
+    },
+    {
+      "gen": 22,
+      "mean_fitness": -8.122189013560577,
+      "best_fitness": 200.1747019249626,
+      "best_so_far": 257.7598781773405,
+      "fitness_variance": 6177.158029834553
+    },
+    {
+      "gen": 23,
+      "mean_fitness": 12.583319256392056,
+      "best_fitness": 267.88722784333385,
+      "best_so_far": 267.88722784333385,
+      "fitness_variance": 7448.225815517233
+    },
+    {
+      "gen": 24,
+      "mean_fitness": 41.881334130071984,
+      "best_fitness": 225.9884511501337,
+      "best_so_far": 267.88722784333385,
+      "fitness_variance": 7485.8393680084955
+    },
+    {
+      "gen": 25,
+      "mean_fitness": 54.903155602471344,
+      "best_fitness": 266.90312432719486,
+      "best_so_far": 267.88722784333385,
+      "fitness_variance": 7147.445201747226
+    },
+    {
+      "gen": 26,
+      "mean_fitness": 85.05925913349213,
+      "best_fitness": 248.5939097453237,
+      "best_so_far": 267.88722784333385,
+      "fitness_variance": 7817.700337875804
+    },
+    {
+      "gen": 27,
+      "mean_fitness": 99.55858688941021,
+      "best_fitness": 283.77216715401477,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 6681.7410568870755
+    },
+    {
+      "gen": 28,
+      "mean_fitness": 115.83521746251759,
+      "best_fitness": 270.41115404993064,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 6004.753183954423
+    },
+    {
+      "gen": 29,
+      "mean_fitness": 121.8090856937251,
+      "best_fitness": 274.07669311622425,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 5922.648229645908
+    },
+    {
+      "gen": 30,
+      "mean_fitness": 134.91799770053154,
+      "best_fitness": 276.04484260250683,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 6448.207015403994
+    },
+    {
+      "gen": 31,
+      "mean_fitness": 152.96468237469222,
+      "best_fitness": 269.57264945398686,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 5199.097680910048
+    },
+    {
+      "gen": 32,
+      "mean_fitness": 147.55982545148123,
+      "best_fitness": 279.2264790177128,
+      "best_so_far": 283.77216715401477,
+      "fitness_variance": 5365.124081499337
+    },
+    {
+      "gen": 33,
+      "mean_fitness": 159.1941591683925,
+      "best_fitness": 286.44394410062534,
+      "best_so_far": 286.44394410062534,
+      "fitness_variance": 4505.477000529629
+    },
+    {
+      "gen": 34,
+      "mean_fitness": 171.60767382515633,
+      "best_fitness": 280.26355534045405,
+      "best_so_far": 286.44394410062534,
+      "fitness_variance": 4734.002539324765
+    },
+    {
+      "gen": 35,
+      "mean_fitness": 181.45191673164555,
+      "best_fitness": 284.61024622972525,
+      "best_so_far": 286.44394410062534,
+      "fitness_variance": 4491.4633537073605
+    },
+    {
+      "gen": 36,
+      "mean_fitness": 189.54907886329656,
+      "best_fitness": 287.5453269960876,
+      "best_so_far": 287.5453269960876,
+      "fitness_variance": 4752.956594703974
+    },
+    {
+      "gen": 37,
+      "mean_fitness": 202.05321653286154,
+      "best_fitness": 279.063507756672,
+      "best_so_far": 287.5453269960876,
+      "fitness_variance": 3405.5572721759377
+    }
+  ]
+}

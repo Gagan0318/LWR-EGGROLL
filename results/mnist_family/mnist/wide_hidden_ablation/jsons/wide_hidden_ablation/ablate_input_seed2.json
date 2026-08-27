@@ -1,0 +1,16 @@
+{
+  "label": "ablate_input",
+  "seed": 2,
+  "best_test_acc": 0.8572999835014343,
+  "wall_seconds": 298.9547142982483,
+  "rank_spec": {
+    "(128, 784)": 1,
+    "(1024, 128)": 4,
+    "(10, 1024)": 4
+  },
+  "ablated_layer": "input",
+  "ablated_shape": [
+    128,
+    784
+  ]
+}

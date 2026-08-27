@@ -1,0 +1,56 @@
+{
+  "vanilla_r1": {
+    "rank": 1,
+    "total_wall": 61.85472321510315,
+    "n_gens": 800,
+    "cost_per_gen_ms": 77.31840401887894
+  },
+  "vanilla_r2": {
+    "rank": 2,
+    "total_wall": 62.41317009925842,
+    "n_gens": 600,
+    "cost_per_gen_ms": 104.0219501654307
+  },
+  "vanilla_r4": {
+    "rank": 4,
+    "total_wall": 62.786548376083374,
+    "n_gens": 600,
+    "cost_per_gen_ms": 104.64424729347229
+  },
+  "vanilla_r8": {
+    "rank": 8,
+    "total_wall": 62.13069248199463,
+    "n_gens": 560,
+    "cost_per_gen_ms": 110.94766514641897
+  },
+  "vanilla_r16": {
+    "rank": 16,
+    "total_wall": 62.7049720287323,
+    "n_gens": 500,
+    "cost_per_gen_ms": 125.40994405746461
+  },
+  "vanilla_r32": {
+    "rank": 32,
+    "total_wall": 62.17945957183838,
+    "n_gens": 460,
+    "cost_per_gen_ms": 135.17273819964865
+  },
+  "lwr_8_2_0": {
+    "config": "lwr_8_2_0",
+    "total_wall": 63.57920455932617,
+    "n_gens": 620,
+    "cost_per_gen_ms": 102.54710412794543
+  },
+  "lwr_8_4_0": {
+    "config": "lwr_8_4_0",
+    "total_wall": 62.21223855018616,
+    "n_gens": 600,
+    "cost_per_gen_ms": 103.68706425031027
+  },
+  "lwr_8_0_0": {
+    "config": "lwr_8_0_0",
+    "total_wall": 62.26616168022156,
+    "n_gens": 860,
+    "cost_per_gen_ms": 72.40251358165298
+  }
+}

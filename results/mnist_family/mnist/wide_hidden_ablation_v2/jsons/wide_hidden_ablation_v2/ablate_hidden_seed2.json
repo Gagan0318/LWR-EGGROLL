@@ -1,0 +1,16 @@
+{
+  "label": "ablate_hidden",
+  "seed": 2,
+  "best_test_acc": 0.8671999573707581,
+  "wall_seconds": 302.1398766040802,
+  "rank_spec": {
+    "(512, 784)": 4,
+    "(1024, 512)": 1,
+    "(10, 1024)": 4
+  },
+  "ablated_layer": "hidden",
+  "ablated_shape": [
+    1024,
+    512
+  ]
+}

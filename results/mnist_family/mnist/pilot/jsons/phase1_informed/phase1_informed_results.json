@@ -1,0 +1,115 @@
+{
+  "description": "Phase 1-informed vs Phase 2-only rank allocation comparison",
+  "phase2_only_allocation": {
+    "input": 8,
+    "hidden": 4,
+    "output": 0
+  },
+  "results": {
+    "MNIST": {
+      "lwr_4_2_0_phase2only": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.8402999639511108,
+        "std_acc": 0.00742743668824838
+      },
+      "lwr_4_1_0": {
+        "allocation": {
+          "input": "4",
+          "hidden": "1",
+          "output": "0"
+        },
+        "rank_budget": 5,
+        "mean_acc": 0.8424666523933411,
+        "std_acc": 0.001774520212228912
+      },
+      "comparison": {
+        "phase1_informed_advantage": 0.0021666884422302246,
+        "winner": "lwr_4_1_0"
+      }
+    },
+    "Fashion-MNIST": {
+      "lwr_4_2_0_phase2only": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.7216666340827942,
+        "std_acc": 0.004001950898998112
+      },
+      "lwr_4_1_0": {
+        "allocation": {
+          "input": "4",
+          "hidden": "1",
+          "output": "0"
+        },
+        "rank_budget": 5,
+        "mean_acc": 0.7335333228111267,
+        "std_acc": 0.005917414746555156
+      },
+      "comparison": {
+        "phase1_informed_advantage": 0.01186668872833252,
+        "winner": "lwr_4_1_0"
+      }
+    },
+    "KMNIST": {
+      "lwr_4_2_0_phase2only": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.5211333235104879,
+        "std_acc": 0.008270579441524184
+      },
+      "lwr_4_2_0": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.5211333235104879,
+        "std_acc": 0.008270579441524184
+      },
+      "comparison": {
+        "phase1_informed_advantage": 0.0,
+        "winner": "lwr_4_2_0_phase2only"
+      }
+    },
+    "EMNIST-Digits": {
+      "lwr_4_2_0_phase2only": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.8796166578928629,
+        "std_acc": 0.0025245621123460072
+      },
+      "lwr_4_2_0": {
+        "allocation": {
+          "input": "4",
+          "hidden": "2",
+          "output": "0"
+        },
+        "rank_budget": 6,
+        "mean_acc": 0.8796166578928629,
+        "std_acc": 0.0025245621123460072
+      },
+      "comparison": {
+        "phase1_informed_advantage": 0.0,
+        "winner": "lwr_4_2_0_phase2only"
+      }
+    }
+  },
+  "total_wall_seconds": 2974.854710817337
+}

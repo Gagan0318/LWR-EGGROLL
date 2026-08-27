@@ -1,0 +1,98 @@
+{
+  "summary": {
+    "eggroll_r1": {
+      "method": "eggroll",
+      "budget_per_gen": 1,
+      "acc_mean": 0.8244333068529764,
+      "acc_std": 0.0065290817794274965,
+      "n_seeds": 3
+    },
+    "eggroll_r2": {
+      "method": "eggroll",
+      "budget_per_gen": 2,
+      "acc_mean": 0.8156666358311971,
+      "acc_std": 0.002870916033405521,
+      "n_seeds": 3
+    },
+    "eggroll_r4": {
+      "method": "eggroll",
+      "budget_per_gen": 4,
+      "acc_mean": 0.8237333099047343,
+      "acc_std": 0.011791621573717164,
+      "n_seeds": 3
+    },
+    "eggroll_r8": {
+      "method": "eggroll",
+      "budget_per_gen": 8,
+      "acc_mean": 0.8251333236694336,
+      "acc_std": 0.003143610753337716,
+      "n_seeds": 3
+    },
+    "eggroll_r16": {
+      "method": "eggroll",
+      "budget_per_gen": 16,
+      "acc_mean": 0.8160666426022848,
+      "acc_std": 0.004434214407442784,
+      "n_seeds": 3
+    },
+    "eggroll_r32": {
+      "method": "eggroll",
+      "budget_per_gen": 32,
+      "acc_mean": 0.8117999831835429,
+      "acc_std": 0.005892923294845021,
+      "n_seeds": 3
+    },
+    "lwr_2_1_0": {
+      "method": "lwr",
+      "budget_per_gen": 3,
+      "acc_mean": 0.8399333159128824,
+      "acc_std": 0.003272462129498702,
+      "n_seeds": 3
+    },
+    "lwr_4_2_1": {
+      "method": "lwr",
+      "budget_per_gen": 7,
+      "acc_mean": 0.8243666489919027,
+      "acc_std": 0.005806498324786197,
+      "n_seeds": 3
+    },
+    "lwr_8_2_0": {
+      "method": "lwr",
+      "budget_per_gen": 10,
+      "acc_mean": 0.8423333168029785,
+      "acc_std": 0.006398075171298881,
+      "n_seeds": 3
+    }
+  },
+  "wall_budget_seconds": 300.0,
+  "vanilla_ranks": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32
+  ],
+  "lwr_allocations": [
+    [
+      2,
+      1,
+      0
+    ],
+    [
+      4,
+      2,
+      1
+    ],
+    [
+      8,
+      2,
+      0
+    ]
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ]
+}
