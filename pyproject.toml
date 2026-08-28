@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lwr-eggroll"
+version = "0.1.0"
+description = "Layer-Wise Rank allocation for EGGROLL evolution strategies"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Gagan Deep Singh" }]
+dependencies = [
+    "numpy",
+    "jax",
+    "jaxlib",
+    "optax",
+    "flax",
+    "cloudpickle",
+]
+
+[project.optional-dependencies]
+rl = ["brax", "gymnax", "evosax"]
+
+[tool.setuptools]
+packages = ["lwr_eggroll"]
