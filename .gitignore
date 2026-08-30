@@ -7,3 +7,5 @@ __pycache__/
 .ipynb_checkpoints/
 data/
 src/
+lwr_eggroll.egg-info/
+*.egg-info/

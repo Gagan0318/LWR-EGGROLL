@@ -1,0 +1,68 @@
+{
+  "phase1": {
+    "ordering": "output > hidden > input",
+    "summary": {
+      "input": {
+        "mean_abs_delta": 12.039970755577087,
+        "deltas": [
+          13.91279411315918,
+          10.167147397994995
+        ]
+      },
+      "hidden": {
+        "mean_abs_delta": 12.565322399139404,
+        "deltas": [
+          14.457842826843262,
+          10.672801971435547
+        ]
+      },
+      "output": {
+        "mean_abs_delta": 12.810240268707275,
+        "deltas": [
+          14.705507755279541,
+          10.91497278213501
+        ]
+      }
+    }
+  },
+  "phase2": {
+    "baseline_mean": -69.59766960144043,
+    "degradations": {
+      "input": {
+        "shape": "(256, 27)",
+        "mean_fitness": -79.26248931884766,
+        "best_fitness": 12.81048059463501,
+        "degradation": -6.2806360721588135
+      },
+      "hidden": {
+        "shape": "(256, 256)",
+        "mean_fitness": -68.37142562866211,
+        "best_fitness": 31.630382537841797,
+        "degradation": -25.1005380153656
+      },
+      "output": {
+        "shape": "(8, 256)",
+        "mean_fitness": -71.21908569335938,
+        "best_fitness": 44.177528381347656,
+        "degradation": -37.64768385887146
+      }
+    },
+    "ordering": "input > hidden > output"
+  },
+  "phase3": {
+    "least_sensitive": "output",
+    "decision": 0
+  },
+  "allocation": {
+    "input": 4,
+    "hidden": 2,
+    "output": 0
+  },
+  "allocation_label": "4_2_0",
+  "rank_budget": 8,
+  "rank_spec": {
+    "(256, 27)": 4,
+    "(256, 256)": 2,
+    "(8, 256)": 0
+  }
+}
