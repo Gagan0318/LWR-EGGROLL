@@ -22,7 +22,7 @@ Hyperparameters match Sarkar et al. (2026) Table 19.
 
 | Method | Rank (in,hid,out) | Mean best fitness |
 |---|---|---|
-| lwr_4_2_0 | (4,2,0) | 1872.7 |
+| lwr_4_2_0 | (4,2,0) | 2121.2 |
 | lwr_8_4_0 | (8,4,0) | 1616.6 |
 | lwr_4_2_1 (control) | (4,2,1) | 45.6 |
 | lwr_8_4_1 (control) | (8,4,1) | 29.3 |
