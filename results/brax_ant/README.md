@@ -30,7 +30,7 @@ Hyperparameters match Sarkar et al. (2026) Table 19.
 ## Key Inferences
 1. **Uniform r=1 dominates under mean fitness.** Low effective dimensionality — 93.1% of parameters are in low-sensitivity hidden layers. Rank 1 concentrates sampling on one direction per layer with 2,048 samples, yielding excellent signal-to-noise.
 2. **Rank 0 on hidden layers is catastrophic.** lwr_4_0_2 and lwr_8_4_0 collapse because frozen hidden layers (93.1% of parameters) are stuck at random initialisation. Best-so-far fitness ranges 5.1–50.0 across seeds (initialisation lottery).
-3. **Best-fitness metric reveals a different regime.** Allocation (4,2,0) under best fitness achieves 1872.7 — two orders of magnitude above all mean-fitness methods. Rank 2 on hidden layers doubles the perturbation subspace, enabling escape from initial fitness basins around generation 165–175.
-4. **Output-rank isolation.** Moving output from rank 0 to rank 1 collapses fitness by 40–57× ((4,2,0)→(4,2,1): 1872.7→45.6). Co-adaptation disruption: perturbing the output readout prevents upstream layers from converging.
+3. **Best-fitness metric reveals a different regime.** Allocation (4,2,0) under best fitness achieves 2121.2 — two orders of magnitude above all mean-fitness methods. Rank 2 on hidden layers doubles the perturbation subspace, enabling escape from initial fitness basins around generation 165–175.
+4. **Output-rank isolation.** Moving output from rank 0 to rank 1 collapses fitness by 40–57× ((4,2,0)→(4,2,1): 2121.2→45.6). Co-adaptation disruption: perturbing the output readout prevents upstream layers from converging.
 5. **Pilot diagnostic branch works.** All-negative Phase 2 scores correctly identify low effective dimensionality → uniform r=1 fallback.
 
