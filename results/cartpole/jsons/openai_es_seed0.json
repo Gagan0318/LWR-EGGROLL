@@ -1,0 +1,66 @@
+{
+  "method": "openai_es",
+  "seed": 0,
+  "best_fitness": 500.0,
+  "final_mean_fitness": 477.16953125,
+  "generations": 8,
+  "wall_seconds": 34.69350576400757,
+  "history": [
+    {
+      "gen": 0,
+      "mean_fitness": 42.778906250000006,
+      "best_fitness": 403.6,
+      "best_so_far": 403.6,
+      "fitness_variance": 2718.0103363037115
+    },
+    {
+      "gen": 1,
+      "mean_fitness": 105.04765625000002,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 8239.677572631836
+    },
+    {
+      "gen": 2,
+      "mean_fitness": 174.66640625000002,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 12079.778871459961
+    },
+    {
+      "gen": 3,
+      "mean_fitness": 273.5,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 16156.257187499998
+    },
+    {
+      "gen": 4,
+      "mean_fitness": 358.9890625,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 15229.048942871093
+    },
+    {
+      "gen": 5,
+      "mean_fitness": 445.86953125,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 8028.1678216552755
+    },
+    {
+      "gen": 6,
+      "mean_fitness": 459.33984375,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 6062.211224975586
+    },
+    {
+      "gen": 7,
+      "mean_fitness": 477.16953125,
+      "best_fitness": 500.0,
+      "best_so_far": 500.0,
+      "fitness_variance": 4249.807352905273
+    }
+  ]
+}

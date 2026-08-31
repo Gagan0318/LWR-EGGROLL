@@ -1,0 +1,250 @@
+{
+  "method": "reinforce",
+  "seed": 3,
+  "best_fitness": 500.0,
+  "final_mean_fitness": 314.33,
+  "episodes": 2000,
+  "wall_seconds": 1613.5550978183746,
+  "history": [
+    {
+      "episode": 0,
+      "return": 17.0,
+      "avg_recent": 17.0,
+      "best_so_far": 17.0
+    },
+    {
+      "episode": 50,
+      "return": 61.0,
+      "avg_recent": 51.9,
+      "best_so_far": 136.0
+    },
+    {
+      "episode": 100,
+      "return": 117.0,
+      "avg_recent": 75.5,
+      "best_so_far": 158.0
+    },
+    {
+      "episode": 150,
+      "return": 112.0,
+      "avg_recent": 175.9,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 200,
+      "return": 100.0,
+      "avg_recent": 77.92,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 250,
+      "return": 69.0,
+      "avg_recent": 63.58,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 300,
+      "return": 105.0,
+      "avg_recent": 79.48,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 350,
+      "return": 146.0,
+      "avg_recent": 106.22,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 400,
+      "return": 54.0,
+      "avg_recent": 77.98,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 450,
+      "return": 62.0,
+      "avg_recent": 77.32,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 500,
+      "return": 123.0,
+      "avg_recent": 81.14,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 550,
+      "return": 70.0,
+      "avg_recent": 83.46,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 600,
+      "return": 60.0,
+      "avg_recent": 89.38,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 650,
+      "return": 80.0,
+      "avg_recent": 83.48,
+      "best_so_far": 481.0
+    },
+    {
+      "episode": 700,
+      "return": 397.0,
+      "avg_recent": 204.44,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 750,
+      "return": 181.0,
+      "avg_recent": 193.9,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 800,
+      "return": 133.0,
+      "avg_recent": 142.18,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 850,
+      "return": 182.0,
+      "avg_recent": 186.26,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 900,
+      "return": 500.0,
+      "avg_recent": 322.72,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 950,
+      "return": 270.0,
+      "avg_recent": 442.58,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1000,
+      "return": 500.0,
+      "avg_recent": 444.24,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1050,
+      "return": 98.0,
+      "avg_recent": 333.98,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1100,
+      "return": 125.0,
+      "avg_recent": 150.28,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1150,
+      "return": 99.0,
+      "avg_recent": 136.46,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1200,
+      "return": 149.0,
+      "avg_recent": 129.72,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1250,
+      "return": 418.0,
+      "avg_recent": 337.56,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1300,
+      "return": 189.0,
+      "avg_recent": 391.78,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1350,
+      "return": 396.0,
+      "avg_recent": 339.48,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1400,
+      "return": 113.0,
+      "avg_recent": 196.58,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1450,
+      "return": 202.0,
+      "avg_recent": 155.66,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1500,
+      "return": 261.0,
+      "avg_recent": 290.62,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1550,
+      "return": 28.0,
+      "avg_recent": 251.44,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1600,
+      "return": 300.0,
+      "avg_recent": 57.0,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1650,
+      "return": 328.0,
+      "avg_recent": 270.8,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1700,
+      "return": 154.0,
+      "avg_recent": 215.74,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1750,
+      "return": 89.0,
+      "avg_recent": 121.16,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1800,
+      "return": 157.0,
+      "avg_recent": 99.34,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1850,
+      "return": 95.0,
+      "avg_recent": 98.3,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1900,
+      "return": 148.0,
+      "avg_recent": 121.84,
+      "best_so_far": 500.0
+    },
+    {
+      "episode": 1950,
+      "return": 292.0,
+      "avg_recent": 240.1,
+      "best_so_far": 500.0
+    }
+  ]
+}
