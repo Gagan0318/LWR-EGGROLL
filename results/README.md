@@ -28,3 +28,23 @@ results/
 Result files follow the pattern `{method}_seed{N}.json` or `seed{N}.json` within a method subfolder. Allocation labels use the format `lwr_{input}_{hidden}_{output}` — for example, `lwr_8_4_0` means rank 8 on the input layer, rank 4 on hidden, and rank 0 (frozen) on the output layer.
 
 Each environment's subfolder has its own README with setup details, result tables, and key inferences.
+
+## Utility Files
+
+### `dump_results.py`
+
+Scans every JSON file under `results/` and prints a per-seed summary of all experiments, grouped by method. Also collects hyperparameters and pilot metadata from summary/config JSONs. Run from the repository root:
+
+python results/dump_results.py
+
+
+Output is printed to stdout and also written to `results/all_results.txt`.
+
+### `all_results.txt`
+
+Pre-generated output of `dump_results.py`, committed for convenience. To regenerate after adding new result JSONs:
+
+python results/dump_results.py
+
+
+This overwrites `all_results.txt` with the current state of all results.

@@ -20,14 +20,14 @@ notebooks/            Colab notebook for Brax Ant (GPU-dependent experiments)
 ```
 
 Utility files at root level:
-- `generate_figs_from_results.py` — regenerates all dissertation figures from result JSONs
-- `dump_results.py` — prints a summary of all results to stdout (also saved as `all_results.txt`)
+
+- `results/dump_results.py` — prints a per-seed summary of all results (also saved as `results/all_results.txt`)
 - `environment.yml` / `requirements.txt` — conda and pip dependency specs
 - `pyproject.toml` — package metadata for `pip install -e .`
 
 ## Setup
 
-Full environment setup instructions are in [SETTING_UP.md](SETTING_UP.md). In brief:
+Full environment setup instructions are in [Setup/SETTING_UP.md](Setup/SETTING_UP.md). In brief:
 
 1. Create the conda environment: `conda env create -f environment.yml`
 2. Activate it: `conda activate eggroll`
