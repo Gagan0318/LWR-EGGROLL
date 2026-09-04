@@ -42,6 +42,10 @@ For Brax Ant experiments that require GPU, see `notebooks/brax_ant_colab.ipynb` 
 
 All result JSONs are committed to the repository under `results/`. Each experiment script writes to its corresponding results subfolder and skips seeds that already have a JSON file. To verify results from scratch, delete the relevant JSONs and re-run the script. See individual README files in each results subfolder for experiment details and key findings.
 
+## Built On
+
+This project extends [HyperscaleES (EGGROLL)](https://github.com/ESHyperscale/HyperscaleES) by Sarkar et al. (2026). The base EGGROLL implementation is installed as a dependency — see [Setup/SETTING_UP.md](Setup/SETTING_UP.md) for details.
+
 ## Citation
 
 This repository accompanies the MSc dissertation *"LWR-EGGROLL: Layer-Wise Rank Allocation for Low-Rank Evolution Strategies"* by Gagan Deep Singh, supervised by Prof. Per Kristian Lehre, University of Birmingham, September 2026.
